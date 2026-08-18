@@ -1,15 +1,16 @@
-# Plastic Turtle
+# Plastic Turtle 🐢
 
-`pt` runs a project directory inside a disposable [Tart](https://tart.run) VM.
-`pt shell` clones a VM image copy-on-write, boots it, shares the project
-directory into the guest over virtiofs, and drops you into an SSH session
-sitting in that directory. When the last shell exits, the VM is stopped and the
-clone is deleted. Nothing survives except what was written into the shared
-directories.
+Plastic Turtle is an easy-to-use sandboxing tool that allows you to work with your projects in dedicated, disposable [Tart](https://tart.run) VM instances. This is useful when you want to `--dangerously-skip-permissions`.
 
-The motivating use is running an LLM agent against a repository without giving
-it the host: the agent gets a real machine, a real shell, and the project, and
-nothing else.
+Using Plastic Turtle (`pt`) is simple:
+
+1. **Add a `.plasticturtle` config to your project** – `cd` to your project directory and run `pt init`; you will be prompted to choose a base image and other parameters, and a `.plasticturtle` file will be created in your project directory.
+2. **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the VM (cloning and starting it, if it isn't already!) and give you a shell. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
+
+Couple of #protips: 
+
+- Run `pt list` to see everything that's running.
+- If you make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory.
 
 ## What the isolation is and is not
 
