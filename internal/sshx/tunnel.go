@@ -13,6 +13,12 @@ type Tunnel struct {
 	client     *Client
 	ln         net.Listener
 	remoteAddr string
+
+	// candidates are the guest-side addresses to try, in order. chosen latches
+	// whichever last answered, so the cost of trying a dead one is paid once
+	// per tunnel rather than once per connection.
+	candidates []string
+	chosen     string
 	logf       func(string, ...any)
 
 	once     sync.Once
@@ -97,6 +103,23 @@ func (t *Tunnel) remove(c io.Closer) {
 // so targeting the guest's external IP would miss services bound to loopback,
 // which is most of them.
 func (c *Client) Forward(ctx context.Context, hostAddr, remoteAddr string, logf func(string, ...any)) (*Tunnel, error) {
+	return c.ForwardAny(ctx, hostAddr, []string{remoteAddr}, logf)
+}
+
+// ForwardAny is Forward with more than one candidate guest-side address.
+//
+// The tunnel tries them in order on its first connection and latches whichever
+// answers, so a caller that cannot know in advance which interface a guest
+// service will bind to does not have to guess. The cost of a dead candidate is
+// paid once per tunnel, not once per connection.
+//
+// This exists because the question "which address will the guest answer on?"
+// has no true answer at tunnel-setup time — nothing is listening on any of them
+// yet — so it must be asked lazily, by a real connection.
+func (c *Client) ForwardAny(ctx context.Context, hostAddr string, remoteAddrs []string, logf func(string, ...any)) (*Tunnel, error) {
+	if len(remoteAddrs) == 0 {
+		return nil, fmt.Errorf("forward %s: no guest address given", hostAddr)
+	}
 	if err := requireLoopback(hostAddr); err != nil {
 		return nil, err
 	}
@@ -119,7 +142,8 @@ func (c *Client) Forward(ctx context.Context, hostAddr, remoteAddr string, logf 
 	t := &Tunnel{
 		client:     c,
 		ln:         ln,
-		remoteAddr: remoteAddr,
+		remoteAddr: remoteAddrs[0],
+		candidates: remoteAddrs,
 		logf:       logf,
 		conns:      map[io.Closer]struct{}{},
 	}
@@ -185,7 +209,7 @@ func (t *Tunnel) handle(local net.Conn) {
 		_ = local.Close()
 	}()
 
-	remote, err := t.client.conn.Dial("tcp", t.remoteAddr)
+	remote, err := t.dialGuest()
 	if err != nil {
 		// Logged rather than fatal: the guest service may simply not be up
 		// yet, and killing the listener would turn a transient into a restart.
@@ -256,4 +280,45 @@ func requireLoopback(addr string) error {
 		return fmt.Errorf("forward host address %q: refusing to bind non-loopback address", addr)
 	}
 	return nil
+}
+
+// dialGuest opens a connection to the guest, trying the latched address first
+// and falling back through the remaining candidates.
+//
+// The choice is made here, lazily, rather than once at tunnel setup, because at
+// setup time nothing is listening on any candidate yet — a probe then can only
+// answer "no" and would hardcode the first candidate forever. The first real
+// connection is the earliest moment the question has a true answer.
+func (t *Tunnel) dialGuest() (net.Conn, error) {
+	t.mu.Lock()
+	order := make([]string, 0, len(t.candidates))
+	if t.chosen != "" {
+		order = append(order, t.chosen)
+	}
+	for _, addr := range t.candidates {
+		if addr != t.chosen {
+			order = append(order, addr)
+		}
+	}
+	t.mu.Unlock()
+
+	var lastErr error
+	for _, addr := range order {
+		conn, err := t.client.conn.Dial("tcp", addr)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		t.mu.Lock()
+		if t.chosen != addr {
+			t.chosen = addr
+			t.logf("tunnel %s -> guest %s: using this address", t.ln.Addr(), addr)
+		}
+		t.mu.Unlock()
+		return conn, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no guest address to dial")
+	}
+	return nil, lastErr
 }

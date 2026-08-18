@@ -221,9 +221,9 @@ func (r *run) sleep(ctx context.Context, d time.Duration) error {
 func (r *run) openTunnels(ctx context.Context) error {
 	for _, f := range r.p.Ports {
 		hostAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(f.HostPort))
-		remote := chooseRemoteAddr(ctx, r.vmIP, f.VMPort, sshx.ProbeTCP)
+		remote := guestAddrs(r.vmIP, f.VMPort)
 
-		_, err := r.sshc.Forward(ctx, hostAddr, remote, r.d.Logf)
+		_, err := r.sshc.ForwardAny(ctx, hostAddr, remote, r.d.Logf)
 		if err != nil {
 			// pt shell released its probe listener microseconds before spawning
 			// us, so a bind failure here is most likely somebody else winning
@@ -232,7 +232,7 @@ func (r *run) openTunnels(ctx context.Context) error {
 			if serr := r.sleep(ctx, ptcfg.SSHRetryInitial); serr != nil {
 				return serr
 			}
-			if _, err = r.sshc.Forward(ctx, hostAddr, remote, r.d.Logf); err != nil {
+			if _, err = r.sshc.ForwardAny(ctx, hostAddr, remote, r.d.Logf); err != nil {
 				return fmt.Errorf("forward host port %d: %w", f.HostPort, err)
 			}
 		}
@@ -241,31 +241,26 @@ func (r *run) openTunnels(ctx context.Context) error {
 	return nil
 }
 
-// chooseRemoteAddr decides, once per forward, which address inside the guest a
-// tunnel dials.
+// guestAddrs lists the addresses inside the guest a forward may dial, in
+// preference order.
 //
-// 127.0.0.1 is the default and is right for almost everything: the dial happens
-// inside the guest, and a dev server bound to loopback is invisible at any other
-// address. The exception is a service bound only to the guest's external
-// interface, which is exactly the case the host can detect — if the port answers
-// at vmIP from here, a dial to vmIP from inside the guest will answer too.
+// Loopback first: most services bind only there, and it is the address the
+// guest itself would use. The guest's external address follows as a fallback
+// for a service bound only to its LAN interface.
 //
-// The decision is made once, at setup, rather than per connection: falling back
-// on each dial would double the latency of every connection to a port where
-// nothing is listening, which is the common case for a forward whose service
-// has not been started yet.
-func chooseRemoteAddr(ctx context.Context, vmIP string, vmPort int, probe func(context.Context, string) error) string {
+// This deliberately does not probe. The previous implementation probed the
+// external address from the HOST at tunnel-setup time and picked a winner --
+// which asked the wrong machine (the dial happens inside the guest) at the
+// wrong moment (nothing is listening on either candidate seconds after boot),
+// so it answered "no" every time and hardcoded loopback. The choice belongs to
+// the first real connection; see Client.ForwardAny.
+func guestAddrs(vmIP string, vmPort int) []string {
 	loopback := net.JoinHostPort("127.0.0.1", strconv.Itoa(vmPort))
 	ip := net.ParseIP(vmIP)
 	if vmIP == "" || ip == nil || ip.IsLoopback() {
-		// Nothing to choose between: the two candidates are the same address.
-		return loopback
+		return []string{loopback}
 	}
-	external := net.JoinHostPort(vmIP, strconv.Itoa(vmPort))
-	if probe(ctx, external) == nil {
-		return external
-	}
-	return loopback
+	return []string{loopback, net.JoinHostPort(vmIP, strconv.Itoa(vmPort))}
 }
 
 // checkMounts re-verifies every share's host path.

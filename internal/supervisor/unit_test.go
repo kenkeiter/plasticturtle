@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"reflect"
 	"strings"
@@ -191,56 +190,45 @@ func TestRunRejectsMissingDeps(t *testing.T) {
 
 // TestChooseRemoteAddr covers item 17: the guest-side dial target is decided
 // once, at setup, not per connection.
-func TestChooseRemoteAddr(t *testing.T) {
-	reachable := func(context.Context, string) error { return nil }
-	refused := func(context.Context, string) error { return errors.New("connection refused") }
-
+func TestGuestAddrs(t *testing.T) {
 	tests := []struct {
-		name  string
-		vmIP  string
-		probe func(context.Context, string) error
-		want  string
-		calls int
+		name string
+		vmIP string
+		want []string
 	}{
 		{
-			name: "loopback default when nothing answers externally",
-			vmIP: "192.168.64.7", probe: refused,
-			want: "127.0.0.1:3000", calls: 1,
+			name: "loopback first, guest address as fallback",
+			vmIP: "192.168.64.7",
+			want: []string{"127.0.0.1:3000", "192.168.64.7:3000"},
 		},
 		{
-			name: "guest address when the service answers there",
-			vmIP: "192.168.64.7", probe: reachable,
-			want: "192.168.64.7:3000", calls: 1,
+			// Nothing to fall back to: the two candidates would be identical.
+			name: "loopback only when the guest address is loopback",
+			vmIP: "127.0.0.1",
+			want: []string{"127.0.0.1:3000"},
 		},
 		{
-			name: "no probe when the guest address is loopback",
-			vmIP: "127.0.0.1", probe: reachable,
-			want: "127.0.0.1:3000", calls: 0,
+			name: "loopback only when the guest address is unknown",
+			vmIP: "",
+			want: []string{"127.0.0.1:3000"},
 		},
 		{
-			name: "no probe when the guest address is unknown",
-			vmIP: "", probe: reachable,
-			want: "127.0.0.1:3000", calls: 0,
-		},
-		{
-			name: "no probe when the guest address is unparseable",
-			vmIP: "not-an-ip", probe: reachable,
-			want: "127.0.0.1:3000", calls: 0,
+			name: "loopback only when the guest address is unparseable",
+			vmIP: "not-an-ip",
+			want: []string{"127.0.0.1:3000"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			calls := 0
-			probe := func(ctx context.Context, addr string) error {
-				calls++
-				return tc.probe(ctx, addr)
+			got := guestAddrs(tc.vmIP, 3000)
+			if len(got) != len(tc.want) {
+				t.Fatalf("guestAddrs(%q) = %v, want %v", tc.vmIP, got, tc.want)
 			}
-			if got := chooseRemoteAddr(context.Background(), tc.vmIP, 3000, probe); got != tc.want {
-				t.Errorf("chooseRemoteAddr = %q, want %q", got, tc.want)
-			}
-			if calls != tc.calls {
-				t.Errorf("probed %d times, want %d", calls, tc.calls)
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("guestAddrs(%q)[%d] = %q, want %q", tc.vmIP, i, got[i], tc.want[i])
+				}
 			}
 		})
 	}
