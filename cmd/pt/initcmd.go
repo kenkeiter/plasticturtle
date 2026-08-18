@@ -1,0 +1,251 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/huh"
+
+	"github.com/kenkeiter/plasticturtle/internal/config"
+	"github.com/kenkeiter/plasticturtle/internal/tart"
+)
+
+// defaultImage is the image pt suggests. It is the one this tool is developed
+// and tested against.
+const defaultImage = "ghcr.io/cirruslabs/macos-tahoe-base:latest"
+
+// customImageSentinel marks the picker entry that opens a free-text prompt. It
+// is not a legal image reference, so it cannot collide with a real one.
+const customImageSentinel = "\x00enter-a-reference"
+
+// runInit writes a .plasticturtle interactively and records trust in it.
+//
+// The file it produces is trusted without a confirmation prompt: the user just
+// authored it, answering every question that pt allow would have asked. Asking
+// them to re-approve their own answers would teach them that the trust prompt
+// is a formality.
+func runInit(e *env, path string, out io.Writer, interactive bool) error {
+	dir, err := initTargetDir(path)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(dir, config.FileName)
+
+	if _, err := os.Stat(target); err == nil {
+		return fmt.Errorf("%s already exists\nedit it, then run: pt allow", target)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", target, err)
+	}
+
+	if !interactive {
+		// Every question below needs an answer. Hanging on a read that will
+		// never come is worse than saying so.
+		return fmt.Errorf("pt init is interactive; run it from a terminal")
+	}
+
+	image, err := pickImage(e)
+	if err != nil {
+		return err
+	}
+	ports, err := promptPorts()
+	if err != nil {
+		return err
+	}
+
+	cfg := &config.Config{Version: config.SchemaVersion, Image: image, Ports: ports}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	body, err := config.Template(cfg, time.Now())
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(target, body, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", target, err)
+	}
+
+	// Trust is keyed on the exact bytes just written, at the same canonical path
+	// config.Find will produce later.
+	if err := e.Trust.Allow(dir, config.HashBytes(body), time.Now()); err != nil {
+		return fmt.Errorf("wrote %s but could not record trust: %w", target, err)
+	}
+
+	fmt.Fprintf(out, "Wrote %s and allowed it.\n\n", target)
+	fmt.Fprintf(out, "Next: pt shell\n")
+	fmt.Fprintf(out, "Tip:  add `source <(pt zsh-hook)` to ~/.zshrc for a trust warning and prompt marker.\n")
+	return nil
+}
+
+// initTargetDir canonicalizes the target the same way config.Find will, so the
+// trust entry written here is found by the same key later. A project reached
+// through a symlink must be one project, not two.
+func initTargetDir(path string) (string, error) {
+	if path == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		path = wd
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", abs, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", resolved)
+	}
+	return resolved, nil
+}
+
+// pickImage offers the images tart already has, plus free-text entry for any
+// OCI reference.
+func pickImage(e *env) (string, error) {
+	opts := []huh.Option[string]{}
+	for _, name := range availableImages(e) {
+		opts = append(opts, huh.NewOption(name, name))
+	}
+	if len(opts) == 0 {
+		// No local images: the default is still a valid answer, it just has to
+		// be pulled on first boot.
+		opts = append(opts, huh.NewOption(defaultImage+" (will be pulled)", defaultImage))
+	}
+	opts = append(opts, huh.NewOption("Enter an OCI reference…", customImageSentinel))
+
+	var choice string
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Image").
+			Description("The VM image this project boots. Cloned fresh for every session group.").
+			Options(opts...).
+			Value(&choice),
+	))
+	if err := form.Run(); err != nil {
+		return "", err
+	}
+	if choice != customImageSentinel {
+		return choice, nil
+	}
+
+	var custom string
+	entry := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("OCI reference").
+			Placeholder(defaultImage).
+			Value(&custom).
+			Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("an image is required")
+				}
+				return nil
+			}),
+	))
+	if err := entry.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(custom), nil
+}
+
+// availableImages lists what tart already has locally, newest names sorted so
+// the picker is stable between runs.
+func availableImages(e *env) []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	vms, err := e.Tart.List(ctx)
+	if err != nil {
+		// A missing or broken tart is not a reason to refuse to write a config;
+		// the user can still type a reference and find out at pt shell time.
+		return nil
+	}
+	var names []string
+	for _, vm := range vms {
+		// Never offer one of our own ephemeral clones as a base image.
+		if strings.HasPrefix(vm.Name, "pt-") {
+			continue
+		}
+		// Only stopped images are usable as a clone source.
+		if vm.State == tart.StateRunning {
+			continue
+		}
+		names = append(names, vm.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// promptPorts asks for forwards as a single line, which is friendlier than an
+// unbounded repeat loop and keeps the parse testable on its own.
+func promptPorts() ([]config.Port, error) {
+	var line string
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Ports (optional)").
+			Description("Forwards as vm_port[:host_port], comma separated. Example: 3000, 5432:15432").
+			Value(&line).
+			Validate(func(s string) error {
+				_, err := parsePortSpecs(s)
+				return err
+			}),
+	))
+	if err := form.Run(); err != nil {
+		return nil, err
+	}
+	return parsePortSpecs(line)
+}
+
+// parsePortSpecs parses "3000, 5432:15432" into port mappings. An omitted host
+// port means "same as the VM port", matching the config file's own default.
+func parsePortSpecs(s string) ([]config.Port, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	var out []config.Port
+	for _, field := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		vmStr, hostStr, hasHost := strings.Cut(field, ":")
+		vm, err := parsePort(vmStr)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", field, err)
+		}
+		p := config.Port{VMPort: vm}
+		if hasHost {
+			host, err := parsePort(hostStr)
+			if err != nil {
+				return nil, fmt.Errorf("%q: %w", field, err)
+			}
+			p.HostPort = host
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func parsePort(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0, fmt.Errorf("not a port number")
+	}
+	if n < 1 || n > 65535 {
+		return 0, fmt.Errorf("port %d is out of range 1..65535", n)
+	}
+	return n, nil
+}

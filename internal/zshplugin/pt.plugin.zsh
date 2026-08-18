@@ -1,11 +1,151 @@
-# pt.plugin.zsh — Plastic Turtle shell integration (placeholder, wave 3).
+# pt.plugin.zsh — Plastic Turtle shell integration.
 #
-# Installed with:  source <(pt zsh-hook)
+# Install by adding this to ~/.zshrc:
 #
-# Wave 3 (agent J) replaces this file with the real implementation:
-#   - chpwd hook: bounded upward walk for .plasticturtle, stopping at / and $HOME
-#   - pt _check-trust <dir>: 0 trusted, 10 untrusted/changed, 1 error
-#   - one-line yellow warning when untrusted
-#   - PT_PROMPT turtle segment, green when trusted, yellow when not
-#   - silent no-op when pt is not on PATH
-command -v pt >/dev/null 2>&1 || return 0
+#     source <(pt zsh-hook)
+#
+# It warns when a project's .plasticturtle is not allowed, and marks the prompt
+# while you are inside a Plastic Turtle project.
+#
+# Three constraints shape everything below. This runs on every directory
+# change, so it must never be noticeable. It lands in other people's shells, so
+# it must not fight their prompt framework, leak names, or disturb $?. And it
+# must survive options the user may have set — notably errexit, under which a
+# bare non-zero exit anywhere here would kill the shell.
+
+# No pt, no plugin. Sourcing this from .zshrc on a machine where pt is not
+# installed must be silent rather than an error on every new shell.
+if ! command -v pt >/dev/null 2>&1; then
+  return 0
+fi
+
+# Sourcing twice must not double-register hooks or double-prefix the prompt.
+# Prompt frameworks re-source their fragments, so this is not hypothetical.
+if (( ${+_PT_PLUGIN_LOADED} )); then
+  return 0
+fi
+typeset -g _PT_PLUGIN_LOADED=1
+
+autoload -Uz add-zsh-hook
+
+# PT_PROMPT is the prompt segment, exported so nested tooling can see it.
+# _PT_* are internal.
+typeset -gx PT_PROMPT=''
+typeset -g _PT_PROJECT_DIR=''
+typeset -g _PT_TRUST=''
+typeset -g _PT_APPLIED=''
+
+# Exit codes from `pt _check-trust`, mirroring internal/zshplugin's constants.
+typeset -gr _PT_EXIT_TRUSTED=0
+typeset -gr _PT_EXIT_UNTRUSTED=10
+
+# _pt_find_project walks upward from $1 (default $PWD) looking for a
+# .plasticturtle, printing the containing directory.
+#
+# The walk stops at $HOME and at /, so a shell sitting deep in a home directory
+# does not stat its way to the root on every cd.
+_pt_find_project() {
+  # Both ends of the $HOME comparison are symlink-resolved, once, before the
+  # walk. On macOS a home or temp path routinely reaches us as /var/... while
+  # $HOME is /private/var/... (or the reverse); comparing the two textually
+  # never matches, and the walk then sails straight past $HOME to the root.
+  local dir=${${1:-$PWD}:A}
+  local home=${HOME:A}
+
+  # $PWD can name a directory that has been deleted underneath the shell.
+  if [[ ! -d $dir ]]; then
+    return 1
+  fi
+
+  while true; do
+    if [[ -f $dir/.plasticturtle ]]; then
+      print -r -- $dir
+      return 0
+    fi
+    if [[ $dir == $home || $dir == / ]]; then
+      return 1
+    fi
+    local parent=${dir:h}
+    if [[ $parent == $dir ]]; then
+      return 1
+    fi
+    dir=$parent
+  done
+}
+
+# _pt_chpwd decides everything. It runs once per directory change, which is
+# also why the warning appears once per directory change rather than on every
+# prompt redraw — a warning that reprints on each Enter is noise people mute.
+_pt_chpwd() {
+  # Preserve the caller's exit status: a hook that clobbers $? breaks every
+  # prompt that renders the last command's status, which is most of them.
+  local last=$?
+
+  local dir
+  if ! dir=$(_pt_find_project); then
+    _PT_PROJECT_DIR=''
+    _PT_TRUST=''
+    PT_PROMPT=''
+    return $last
+  fi
+
+  # Same directory, already decided: skip the subprocess. `cd .` and prompt
+  # frameworks that fire chpwd spuriously are both common.
+  if [[ $dir == $_PT_PROJECT_DIR && -n $_PT_TRUST ]]; then
+    return $last
+  fi
+
+  _PT_PROJECT_DIR=$dir
+
+  # The non-zero codes here are answers, not failures, so the call is written as
+  # a condition: a bare `pt _check-trust; code=$?` would abort the shell under
+  # errexit, and 10 — "not allowed" — is the most likely code this ever gets.
+  local code=0
+  pt _check-trust $dir >/dev/null 2>&1 || code=$?
+
+  case $code in
+    $_PT_EXIT_TRUSTED)
+      _PT_TRUST=trusted
+      PT_PROMPT='%F{green}🐢 %f'
+      ;;
+    $_PT_EXIT_UNTRUSTED)
+      _PT_TRUST=untrusted
+      PT_PROMPT='%F{yellow}🐢 %f'
+      print -P -- "%F{yellow}⚠️  .plasticturtle is not allowed (new or changed). Run 'pt allow' before 'pt shell'.%f"
+      ;;
+    *)
+      # pt failed for a reason of its own. Claiming either trust state would be
+      # a lie, so show nothing rather than guess.
+      _PT_TRUST=error
+      PT_PROMPT=''
+      ;;
+  esac
+
+  return $last
+}
+
+# _pt_precmd only renders what _pt_chpwd decided.
+#
+# It strips the prefix it added last time before adding the current one, so a
+# framework that rewrites PROMPT between prompts is handled: our prefix simply
+# will not be there, and the strip is a no-op. This is deliberately the whole
+# extent of the integration — prefix and nothing else.
+_pt_precmd() {
+  # As above: precmd runs between the user's command and their prompt, so $?
+  # must survive us. Assignments alone would reset it to zero.
+  local last=$?
+
+  if [[ -n $_PT_APPLIED ]]; then
+    PROMPT=${PROMPT#$_PT_APPLIED}
+  fi
+  PROMPT="${PT_PROMPT}${PROMPT}"
+  _PT_APPLIED=$PT_PROMPT
+
+  return $last
+}
+
+add-zsh-hook chpwd _pt_chpwd
+add-zsh-hook precmd _pt_precmd
+
+# Decide for the directory the shell started in, not just for later cds.
+_pt_chpwd
