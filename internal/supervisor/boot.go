@@ -28,6 +28,9 @@ var errBootTimeout = fmt.Errorf("did not become reachable within %s", ptcfg.Boot
 // even though neither step was individually slow, and that is the only bound a
 // user waiting at a spinner can reason about.
 func (r *run) boot(ctx, vmCtx context.Context) error {
+	if err := r.checkTrust(); err != nil {
+		return err
+	}
 	if err := r.checkMounts(); err != nil {
 		return err
 	}
@@ -269,6 +272,39 @@ func guestAddrs(vmIP string, vmPort int) []string {
 // error message that matters. This second check is defense in depth: the
 // supervisor is what hands the paths to tart, and a directory that disappeared
 // between the two would otherwise become a confusing tart failure.
+// checkTrust refuses to boot a config the user never approved.
+//
+// pt shell already made this check, and anyone who can invoke `pt _supervise`
+// can invoke `tart` directly — so this grants no new capability and is not a
+// security boundary. It is here so that the trust decision is layered rather
+// than made in exactly one place: _supervise takes a full config (image,
+// mounts, modes) on stdin and acts on it, and "the only caller is well-behaved"
+// is the kind of assumption that stops being true quietly.
+//
+// It checks the snapshotted hash against the trust database rather than
+// re-hashing the file on disk. The config is deliberately snapshotted at
+// creation (spec §6.2), and the file may legitimately have changed or been
+// deleted since — re-reading it would refuse boots the design explicitly
+// allows.
+//
+// One benign race remains: re-allowing an edited config in the moment between
+// pt shell's check and this one leaves the old hash no longer in the database,
+// and this boot is refused. The next pt shell succeeds.
+func (r *run) checkTrust() error {
+	if r.d.Trust == nil {
+		return errors.New("supervisor: no trust database")
+	}
+	path := r.p.Config.ProjectPath
+	allowed, err := r.d.Trust.Check(path, r.p.ConfigHash)
+	if err != nil {
+		return fmt.Errorf("supervisor: check trust for %s: %w", path, err)
+	}
+	if !allowed {
+		return fmt.Errorf("supervisor: refusing to boot %s: its config is not allowed (%s); run: pt allow", path, r.p.ConfigHash)
+	}
+	return nil
+}
+
 func (r *run) checkMounts() error {
 	var errs []error
 	for _, m := range r.p.Config.Mounts {

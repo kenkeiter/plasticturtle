@@ -812,6 +812,15 @@ func forceDeleteVM(ctx context.Context, tc tart.Client, name string) error {
 	if !InstanceNamePattern.MatchString(name) {
 		return fmt.Errorf("state: refusing to delete vm %q: not a plasticturtle instance", name)
 	}
+
+	// Bounded, because every caller of this holds the project's exclusive lock
+	// and these are subprocesses whose duration pt does not control. An
+	// unbounded `tart delete` here blocks every other pt invocation for the
+	// project indefinitely; with a deadline the reclaim gives up, the lock is
+	// released, and the next GC pass tries again.
+	ctx, cancel := context.WithTimeout(ctx, ptcfg.ReclaimTimeout)
+	defer cancel()
+
 	// A stopped VM makes `tart stop` fail; that is the outcome we wanted, so
 	// only the delete result decides success.
 	_ = tc.Stop(ctx, name, true)

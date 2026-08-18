@@ -22,6 +22,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/state"
 	"github.com/kenkeiter/plasticturtle/internal/sys"
 	"github.com/kenkeiter/plasticturtle/internal/tart"
+	"github.com/kenkeiter/plasticturtle/internal/trust"
 )
 
 // Params is everything the supervisor needs, decoded from stdin.
@@ -104,6 +105,11 @@ type Deps struct {
 	Clock sys.Clock
 	Creds sshx.Credentials
 
+	// Trust is consulted before anything is cloned. Nil means "open the one in
+	// Store.Root", which is what the real _supervise does; tests inject their
+	// own. See run.checkTrust for why the supervisor re-checks at all.
+	Trust trust.Store
+
 	// Logf writes to supervisor.log. It is the only channel the supervisor
 	// has: it is detached, so anything it prints to a terminal goes nowhere.
 	Logf func(format string, args ...any)
@@ -149,6 +155,13 @@ func Run(ctx context.Context, p *Params, d Deps) error {
 	}
 	if d.Creds.User == "" {
 		d.Creds = sshx.DefaultCredentials()
+	}
+	if d.Trust == nil {
+		ts, err := trust.Open(d.Store.TrustPath())
+		if err != nil {
+			return fmt.Errorf("supervisor: open trust database: %w", err)
+		}
+		d.Trust = ts
 	}
 	r := &run{
 		p:         p,

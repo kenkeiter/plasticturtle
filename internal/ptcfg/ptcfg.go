@@ -46,6 +46,17 @@ const (
 
 	// GracefulStopTimeout bounds `tart stop` before escalating to --force.
 	GracefulStopTimeout = 30 * time.Second
+
+	// ReclaimTimeout bounds the whole force-stop-and-delete of a VM whose
+	// supervisor died.
+	//
+	// It exists because that reclaim runs under the project's exclusive lock,
+	// which makes it the longest lock hold in the system and the only one whose
+	// duration pt does not control: without a bound, one wedged `tart delete`
+	// blocks every other invocation for that project forever. Generous enough
+	// for a real delete of a large clone (measured at a few seconds), short
+	// enough that a stuck one resolves on its own.
+	ReclaimTimeout = 60 * time.Second
 )
 
 // Attach path.

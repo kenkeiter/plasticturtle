@@ -18,6 +18,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/state"
 	"github.com/kenkeiter/plasticturtle/internal/sys"
 	"github.com/kenkeiter/plasticturtle/internal/tart"
+	"github.com/kenkeiter/plasticturtle/internal/trust"
 )
 
 // testCreds are the guest credentials both the fake guest and the supervisor
@@ -219,6 +220,19 @@ func newHarness(t *testing.T, forwards ...ports.Resolved) *harness {
 		},
 		deps: Deps{Tart: tc, Store: store, Clock: clk, Creds: testCreds, Logf: lg.logf},
 	}
+
+	// The supervisor refuses to boot a config the trust database does not
+	// know, so the harness records the approval pt allow would have recorded.
+	// A test that wants the refusal path clears it; see trust_test.go.
+	ts, err := trust.Open(store.TrustPath())
+	if err != nil {
+		t.Fatalf("open trust: %v", err)
+	}
+	if err := ts.Allow(projectDir, h.params.ConfigHash, time.Now()); err != nil {
+		t.Fatalf("allow: %v", err)
+	}
+	h.deps.Trust = ts
+
 	return h
 }
 
