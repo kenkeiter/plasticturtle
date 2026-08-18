@@ -35,7 +35,7 @@ test:
 # a VM.
 .PHONY: integration
 integration:
-	$(GO) test -race -tags integration -timeout 20m ./...
+	$(GO) test -race -count=1 -tags integration -timeout 30m ./...
 
 .PHONY: clean
 clean:
