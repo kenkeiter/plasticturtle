@@ -75,10 +75,12 @@ const (
 // GC, and `pt list` must never block behind somebody else's `pt shell`.
 const gcLockWait = 5 * ptcfg.LockRetryInterval
 
-// errLockBusy reports that a lock could not be taken within its deadline. It
-// stays unexported: outside this package "the project is busy" is either fatal
-// (interactive commands) or a skip (GC), and both are decided here.
-var errLockBusy = errors.New("state: lock is held by another process")
+// ErrLockBusy reports that a lock could not be taken within its deadline.
+//
+// It is exported because status commands legitimately decide for themselves
+// that a busy project is a skip rather than a failure — see TryRLock. Callers
+// that cannot proceed without the lock should still treat it as fatal.
+var ErrLockBusy = errors.New("state: lock is held by another process")
 
 // InstanceState is the lifecycle state recorded in instance.json.
 type InstanceState string
@@ -276,22 +278,45 @@ func (l *Lock) Unlock() error {
 // Hold times must be short. Never hold this across a VM boot, an SSH dial, or
 // a user prompt: write state, release, then wait.
 func (s *Store) Lock(projectID string) (*Lock, error) {
-	return s.acquire(projectID, true, ptcfg.LockTimeout)
+	return s.acquire(projectID, true, ptcfg.LockTimeout, true)
 }
 
 // RLock takes the project's shared lock, for read-only status commands.
 func (s *Store) RLock(projectID string) (*Lock, error) {
-	return s.acquire(projectID, false, ptcfg.LockTimeout)
+	return s.acquire(projectID, false, ptcfg.LockTimeout, true)
+}
+
+// TryRLock takes the project's shared lock with a caller-chosen deadline,
+// returning ErrLockBusy rather than waiting out ptcfg.LockTimeout.
+//
+// It exists for two callers that must not behave like an interactive command.
+// A status sweep (pt ports --global, pt list) visits every project, so waiting
+// the full ten seconds on each wedged one would cost N×10s; a busy project is
+// a skip, not a failure. And a poller — pt shell waiting for a boot — must not
+// resurrect state: unlike Lock and RLock, this does NOT create the project
+// directory, so a poll that races teardown reports that the project is gone
+// instead of recreating a directory the supervisor just removed.
+//
+// A missing project directory surfaces as an fs.ErrNotExist-wrapped error.
+func (s *Store) TryRLock(projectID string, wait time.Duration) (*Lock, error) {
+	return s.acquire(projectID, false, wait, false)
 }
 
 // acquire polls for the lock at ptcfg.LockRetryInterval until wait elapses.
 // Polling rather than a blocking flock(2) is what makes the timeout possible:
 // a supervisor that wedges while holding the lock must not hang every other pt
 // invocation forever.
-func (s *Store) acquire(projectID string, exclusive bool, wait time.Duration) (*Lock, error) {
+//
+// create distinguishes callers that may bring a project into existence from
+// those that may only observe one; see TryRLock.
+func (s *Store) acquire(projectID string, exclusive bool, wait time.Duration, create bool) (*Lock, error) {
 	dir := s.ProjectDir(projectID)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return nil, fmt.Errorf("state: create project dir: %w", err)
+	if create {
+		if err := os.MkdirAll(dir, dirPerm); err != nil {
+			return nil, fmt.Errorf("state: create project dir: %w", err)
+		}
+	} else if _, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("state: project dir %s: %w", dir, err)
 	}
 	fl := flock.New(s.LockPath(projectID), flock.SetPermissions(filePerm))
 
@@ -310,7 +335,7 @@ func (s *Store) acquire(projectID string, exclusive bool, wait time.Duration) (*
 		// project, so it has to be closed rather than left to the finalizer.
 		_ = fl.Close()
 		if err == nil || errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("state: lock %s after %s: %w", dir, wait, errLockBusy)
+			return nil, fmt.Errorf("state: lock %s after %s: %w", dir, wait, ErrLockBusy)
 		}
 		return nil, fmt.Errorf("state: lock %s: %w", dir, err)
 	}
@@ -559,7 +584,7 @@ func (s *Store) GC(ctx context.Context, tc tart.Client) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		lk, err := s.acquire(id, true, gcLockWait)
+		lk, err := s.acquire(id, true, gcLockWait, true)
 		if err != nil {
 			// Busy means somebody is actively working on this project, which
 			// is exactly when there is nothing to collect. Any other lock
@@ -707,7 +732,7 @@ func (s *Store) vmIsClaimed(vmName string) (bool, error) {
 		}
 		return true, fmt.Errorf("state: stat project dir: %w", err)
 	}
-	lk, err := s.acquire(projectID, false, gcLockWait)
+	lk, err := s.acquire(projectID, false, gcLockWait, false)
 	if err != nil {
 		return true, nil
 	}

@@ -11,6 +11,9 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/kenkeiter/plasticturtle/internal/config"
@@ -38,10 +41,58 @@ type Params struct {
 
 // ParseParams decodes Params from r, validating that every required field is
 // present.
-func ParseParams(r io.Reader) (*Params, error) { panic("TODO(wave2): supervisor.ParseParams") }
+func ParseParams(r io.Reader) (*Params, error) {
+	if r == nil {
+		return nil, errors.New("supervisor: no parameter stream")
+	}
+	dec := json.NewDecoder(r)
+	// Strict: this is a private protocol between two runs of the same binary,
+	// so an unknown key is a bug, and silently dropping (say) a misspelled
+	// "ports" would boot a VM with no forwards and no complaint.
+	dec.DisallowUnknownFields()
+
+	var p Params
+	if err := dec.Decode(&p); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("supervisor: no parameters on stdin")
+		}
+		return nil, fmt.Errorf("supervisor: decode parameters: %w", err)
+	}
+	// One object, nothing after it. Trailing data means the writer and the
+	// reader disagree about the protocol, which is worth failing on now rather
+	// than acting on half a message.
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err == nil {
+		return nil, errors.New("supervisor: trailing data after parameters")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("supervisor: decode parameters: %w", err)
+	}
+
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
 
 // EncodeParams writes p as JSON, for pt shell to pipe to the child.
-func EncodeParams(w io.Writer, p *Params) error { panic("TODO(wave2): supervisor.EncodeParams") }
+func EncodeParams(w io.Writer, p *Params) error {
+	if w == nil {
+		return errors.New("supervisor: no parameter sink")
+	}
+	if p == nil {
+		return errors.New("supervisor: nil parameters")
+	}
+	// Validated on the way out as well as on the way in: the spawning shell
+	// gets a diagnosable error on its own terminal, whereas the supervisor's
+	// complaint would land in a log file nobody is watching yet.
+	if err := p.validate(); err != nil {
+		return err
+	}
+	if err := json.NewEncoder(w).Encode(p); err != nil {
+		return fmt.Errorf("supervisor: encode parameters: %w", err)
+	}
+	return nil
+}
 
 // Deps are the supervisor's injected collaborators. Tests supply a tart.Fake,
 // a sys.FakeClock and a temp state root, which is what makes the full
@@ -74,4 +125,37 @@ type Deps struct {
 // A boot failure marks the instance dead and cleans up the clone before
 // returning; the waiting pt shell reports it. Teardown is idempotent, because
 // it can be entered from any of the three watchers at once.
-func Run(ctx context.Context, p *Params, d Deps) error { panic("TODO(wave2): supervisor.Run") }
+func Run(ctx context.Context, p *Params, d Deps) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if p == nil {
+		return errors.New("supervisor: nil parameters")
+	}
+	if err := p.validate(); err != nil {
+		return err
+	}
+	if d.Tart == nil {
+		return errors.New("supervisor: no tart client")
+	}
+	if d.Store == nil {
+		return errors.New("supervisor: no state store")
+	}
+	if d.Logf == nil {
+		d.Logf = func(string, ...any) {}
+	}
+	if d.Clock == nil {
+		d.Clock = sys.RealClock()
+	}
+	if d.Creds.User == "" {
+		d.Creds = sshx.DefaultCredentials()
+	}
+	r := &run{
+		p:         p,
+		d:         d,
+		clk:       d.Clock,
+		stopped:   make(chan struct{}),
+		childDone: make(chan struct{}),
+	}
+	return r.execute(ctx)
+}

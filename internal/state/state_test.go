@@ -583,14 +583,14 @@ func TestExclusiveLockBlocksAndTimesOut(t *testing.T) {
 
 	// The short-deadline path GC uses must give up rather than wait.
 	start := time.Now()
-	if _, err := s.acquire(id, true, gcLockWait); !errors.Is(err, errLockBusy) {
-		t.Fatalf("acquire on a held lock = %v, want errLockBusy", err)
+	if _, err := s.acquire(id, true, gcLockWait, true); !errors.Is(err, ErrLockBusy) {
+		t.Fatalf("acquire on a held lock = %v, want ErrLockBusy", err)
 	}
 	if elapsed := time.Since(start); elapsed > ptcfg.LockTimeout/2 {
 		t.Fatalf("acquire waited %v before giving up", elapsed)
 	}
-	if _, err := s.acquire(id, false, gcLockWait); !errors.Is(err, errLockBusy) {
-		t.Fatalf("shared acquire on a held exclusive lock = %v, want errLockBusy", err)
+	if _, err := s.acquire(id, false, gcLockWait, true); !errors.Is(err, ErrLockBusy) {
+		t.Fatalf("shared acquire on a held exclusive lock = %v, want ErrLockBusy", err)
 	}
 }
 
@@ -614,7 +614,7 @@ func TestUnlockIsIdempotent(t *testing.T) {
 	if err := lk.Unlock(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.acquire(id, true, gcLockWait); !errors.Is(err, errLockBusy) {
+	if _, err := s.acquire(id, true, gcLockWait, true); !errors.Is(err, ErrLockBusy) {
 		t.Fatal("a repeated Unlock released another holder's lock")
 	}
 	if err := other.Unlock(); err != nil {

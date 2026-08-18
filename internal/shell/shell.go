@@ -44,7 +44,7 @@ type Spawner interface {
 }
 
 // RealSpawner returns a Spawner backed by os/exec with Setsid set.
-func RealSpawner() Spawner { panic("TODO(wave2): shell.RealSpawner") }
+func RealSpawner() Spawner { return realSpawner{} }
 
 // Deps are the injected collaborators.
 type Deps struct {
@@ -78,6 +78,21 @@ type Deps struct {
 // one, Run attaches anyway and says so: the running VM keeps the mounts and
 // image it booted with, and the new config takes effect once every shell has
 // exited.
+//
+// Return contract: a nil error means exitCode is the remote shell's own status
+// and nothing else went wrong. A non-nil error is pt's failure, not the
+// guest's, and is returned rather than printed — cobra prints what RunE
+// returns, and printing here too would show the user everything twice. The
+// accompanying code is 1 for pt's own failures and 255 (ssh(1)'s convention)
+// when the session itself could not be carried, so a script can tell "the VM
+// said no" from "we never got in".
 func Run(ctx context.Context, o Opts, d Deps) (exitCode int, err error) {
-	panic("TODO(wave2): shell.Run")
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r, err := newRunner(o, d)
+	if err != nil {
+		return exitFailure, err
+	}
+	return r.run(ctx)
 }
