@@ -96,41 +96,5 @@ type Client interface {
 	List(ctx context.Context) ([]VM, error)
 }
 
-// NewCLI returns a Client that shells out to the tart binary at bin (empty
-// means DefaultBinary) via r.
-func NewCLI(bin string, r sys.Runner) Client {
-	panic("TODO(wave1): tart.NewCLI")
-}
-
-// Fake is an in-memory Client for tests. It tracks VM existence and state so
-// that lifecycle assertions ("the clone was deleted after teardown") are real
-// assertions and not just call-log matching.
-type Fake struct{ panicPlaceholder struct{} }
-
-// NewFake returns a Fake with the given images already present.
-func NewFake(images ...string) *Fake { panic("TODO(wave1): tart.NewFake") }
-
-// Existing returns the names of VMs the fake currently holds.
-func (f *Fake) Existing() []string { panic("TODO(wave1)") }
-
-// SetIP sets the address IP will return for name once it is running.
-func (f *Fake) SetIP(name, ip string) { panic("TODO(wave1)") }
-
-// FailNext makes the next call to the named method return err.
-func (f *Fake) FailNext(method string, err error) { panic("TODO(wave1)") }
-
-// Process returns the handle previously returned by Run for name, so a test
-// can make the VM die unexpectedly.
-func (f *Fake) Process(name string) *sys.FakeProcess { panic("TODO(wave1)") }
-
-func (f *Fake) Clone(ctx context.Context, image, name string) error { panic("TODO(wave1)") }
-func (f *Fake) Set(ctx context.Context, name string, cpu, memoryMiB int) error {
-	panic("TODO(wave1)")
-}
-func (f *Fake) Run(ctx context.Context, name string, opts RunOpts) (sys.Process, error) {
-	panic("TODO(wave1)")
-}
-func (f *Fake) Stop(ctx context.Context, name string, force bool) error { panic("TODO(wave1)") }
-func (f *Fake) Delete(ctx context.Context, name string) error           { panic("TODO(wave1)") }
-func (f *Fake) IP(ctx context.Context, name string) (string, error)     { panic("TODO(wave1)") }
-func (f *Fake) List(ctx context.Context) ([]VM, error)                  { panic("TODO(wave1)") }
+// The CLI implementation lives in cli.go and the in-memory Fake in fake.go;
+// this file is the frozen surface both of them satisfy.

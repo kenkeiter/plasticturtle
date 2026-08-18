@@ -37,6 +37,14 @@ guess. Overrule any of these before kickoff — they are cheap now and expensive
 | 8 | Nothing bounds `supervisor.log` growth. | Truncate on supervisor start (one instance = one log lifetime); the file is per-project and short-lived. |
 | 9 | Timeouts are scattered through the prose. | Centralize as exported constants in `internal/state` (or a tiny `internal/ptcfg`): boot 120 s, ssh-dial retry backoff 250 ms→2 s, session-poll 2 s, empty-debounce 3 s, heartbeat 5 s, graceful stop 30 s, creating-wait poll 250 ms. Every package references these; no literals. |
 | 10 | Clock and process spawning are untestable if used directly. | Wave 0 defines `Clock` and `Runner` (exec) seams. Unit tests inject fakes; `time.Now`/`exec.CommandContext` appear in exactly one file per package. |
+| 11 | **`tart stop --force` does not exist.** Spec §6.3 step 6 and §10 both call for it; tart 2.32.1 answers `Unknown option '--force'` with exit 64. Verified against the installed binary in wave 1. | `tart.Client.Stop(ctx, name, force)` keeps its signature — the wrapper translates. `force=true` emits `tart stop <name> --timeout 0`; `force=false` emits a bare `tart stop <name>`, which uses tart's own 30 s graceful default (equal to `ptcfg.GracefulStopTimeout` by coincidence, not by wiring). Nothing above the wrapper knows the difference. |
+| 12 | `RunOpts.NoGraphics` is honored rather than forced, per its frozen doc comment. | **The supervisor must set `NoGraphics: true` explicitly.** Omitting it opens a UI window for every VM pt boots — a silent, highly visible regression that no unit test against `tart.Fake` will catch. |
+| 17 | Item 3's "fall back once to `vmIp:<vmPort>`" cannot live in `sshx.Forward` — the frozen signature takes a single `remoteAddr` and knows nothing about the guest's address. | **Wave 2 agent G (supervisor) owns the fallback**: probe `127.0.0.1:<vmPort>` and `vmIp:<vmPort>` once at tunnel setup and pass the winner to `Forward`. Doing it per-connection inside the tunnel would double the latency of every dial to a service that simply is not listening. |
+| 18 | `sshx.TestServer` is exported in the ordinary build, so a working SSH *server* links into the shipped `pt` binary. | Accepted for now — it is what makes tunnels testable without a VM. Flagged for the wave-4 review to decide whether it moves behind a build tag; doing so would change the frozen contract, so it is not a wave-1 or wave-2 change. |
+| 15 | **GC can delete the VM of a shell that is still booting it.** Per item 1, `pt shell` writes `instance.json{state:creating}` *before* spawning the supervisor, so a healthy instance briefly has no `supervisorPid`. A naive "PID not alive → reclaim" reads that window as a crash. | A record with `SupervisorPID <= 0` is spared until `CreatedAt + ptcfg.BootTimeout`, then reclaimed. **Wave 2 agent H must still write `SupervisorPID`/`SupervisorStart` as soon as the spawn returns** — the grace period is a crash backstop, not a license to leave the field unset. |
+| 16 | §10 scopes reclamation to "dead supervisor with `state != dead`", but §6.1 has `Dead → NoInstance` on next shell or GC. The two overlap inconsistently. | Unified: **the supervisor being dead is the entire predicate**, whatever the state field says. A live-but-wedged supervisor (stale heartbeat, live PID) is deliberately left alone — killing a running process's VM is worse than showing a stuck row in `pt list`. |
+| 14 | Spec §3.1 requires `resources.cpu ≥ 1`, but the frozen `Resources` fields are `omitempty` with "zero means inherit" — so after decoding, `cpu: 0` and an absent `cpu` are indistinguishable. Rejecting `0` would make `resources: {memory: 8192}` fail. | `0` means inherit; only negative values are rejected (and `0 < memory < 512`). Literal `cpu: 0` therefore passes validation. Changing this requires presence tracking via `yaml.Node`, which is not worth it. |
+| 13 | `tart list --format json` reports `"Source": "OCI"` (uppercase) while the frozen `SourceOCI` constant is `"oci"`. | `tart.List` lowercases `Source` and `State` after decoding. Consequence: never `json.Unmarshal` into `tart.VM` directly — go through `List`, or the comparison against the constants silently fails. |
 
 ---
 
@@ -46,6 +54,17 @@ A single agent writes **compiling, tested-to-`go vet` skeletons** for every pack
 any implementation agent starts. Bodies are `panic("TODO(wave1)")`; signatures, structs,
 and doc comments are final. This is the interface freeze — wave 1+ agents implement against
 it and may not change exported signatures without escalating to the orchestrator.
+
+Three packages exist that the spec's §11 layout does not name, all added in wave 0:
+
+- `internal/ptcfg` — every timeout, poll interval and debounce as named constants.
+  No other package may hard-code a duration.
+- `internal/sys` — the `Clock` and `Runner` seams, plus `FakeClock`/`FakeRunner`/
+  `FakeProcess`. **Implemented in wave 0, not stubbed**: every other package's tests
+  depend on it, so leaving it a skeleton would have serialized wave 1 behind one agent.
+- `internal/deps` — blank imports pinning the runtime dependencies. Without it
+  `go mod tidy` drops libraries no implemented package imports yet, and parallel agents
+  race each other on `go.mod`. Delete it once every library is genuinely imported.
 
 ```
 internal/config    Config, Mount, Port structs; Load(dir) (*Config, RawBytes, error);

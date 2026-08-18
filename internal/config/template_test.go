@@ -1,0 +1,212 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+var generated = time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)
+
+// loadTemplate writes a rendered template as a real .plasticturtle and takes it
+// back through the full Load/Validate path — the only round trip that matters.
+func loadTemplate(t *testing.T, out []byte) *Config {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, FileName), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, raw, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load of rendered template failed: %v\n---\n%s", err, out)
+	}
+	if string(raw) != string(out) {
+		t.Error("Load returned different bytes than were written")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate of rendered template failed: %v\n---\n%s", err, out)
+	}
+	return cfg
+}
+
+func TestTemplateRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{
+			name: "minimal (all optional sections commented out)",
+			cfg:  &Config{Version: 1, Image: "ghcr.io/cirruslabs/macos-tahoe-base:latest"},
+		},
+		{
+			name: "version left unset by pt init",
+			cfg:  &Config{Image: "tahoe-base"},
+		},
+		{
+			name: "resources only",
+			cfg:  &Config{Version: 1, Image: "tahoe-base", Resources: &Resources{CPU: 8, Memory: 8192}},
+		},
+		{
+			name: "cpu only",
+			cfg:  &Config{Version: 1, Image: "tahoe-base", Resources: &Resources{CPU: 2}},
+		},
+		{
+			name: "ports with and without host_port",
+			cfg:  &Config{Version: 1, Image: "tahoe-base", Ports: []Port{{VMPort: 3000, HostPort: 3000}, {VMPort: 5432}, {VMPort: 8080, HostPort: 18080}}},
+		},
+		{
+			name: "mounts including the reserved project entry",
+			cfg: &Config{Version: 1, Image: "tahoe-base", Mounts: []Mount{
+				{Name: ProjectMountName, Mode: ModeRO},
+				{Name: "datasets", HostPath: "~/datasets", Mode: ModeRO},
+				{Name: "scratch", HostPath: "./scratch"},
+			}},
+		},
+		{
+			name: "everything at once",
+			cfg: &Config{
+				Version:   1,
+				Image:     "ghcr.io/cirruslabs/macos-tahoe-base:latest",
+				Resources: &Resources{CPU: 8, Memory: 8192},
+				Ports:     []Port{{VMPort: 3000}, {VMPort: 5432, HostPort: 15432}},
+				Mounts:    []Mount{{Name: ProjectMountName, Mode: ModeRW}, {Name: "datasets", HostPath: "~/datasets", Mode: ModeRO}},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := Template(tc.cfg, generated)
+			if err != nil {
+				t.Fatalf("Template: %v", err)
+			}
+			got := loadTemplate(t, out)
+
+			if got.Version != SchemaVersion {
+				t.Errorf("version = %d, want %d", got.Version, SchemaVersion)
+			}
+			if got.Image != tc.cfg.Image {
+				t.Errorf("image = %q, want %q", got.Image, tc.cfg.Image)
+			}
+			if !reflect.DeepEqual(got.Ports, tc.cfg.Ports) && len(tc.cfg.Ports) > 0 {
+				// host_port equal to vm_port is emitted as the default, so
+				// compare effective values rather than the raw field.
+				if len(got.Ports) != len(tc.cfg.Ports) {
+					t.Fatalf("ports = %+v, want %+v", got.Ports, tc.cfg.Ports)
+				}
+				for i := range got.Ports {
+					wantHost := tc.cfg.Ports[i].HostPort
+					if wantHost == 0 {
+						wantHost = tc.cfg.Ports[i].VMPort
+					}
+					gotHost := got.Ports[i].HostPort
+					if gotHost == 0 {
+						gotHost = got.Ports[i].VMPort
+					}
+					if got.Ports[i].VMPort != tc.cfg.Ports[i].VMPort || gotHost != wantHost {
+						t.Errorf("ports[%d] = %+v, want %+v", i, got.Ports[i], tc.cfg.Ports[i])
+					}
+				}
+			}
+			if len(tc.cfg.Mounts) > 0 && !reflect.DeepEqual(got.Mounts, tc.cfg.Mounts) {
+				t.Errorf("mounts = %+v, want %+v", got.Mounts, tc.cfg.Mounts)
+			}
+			if len(tc.cfg.Mounts) == 0 && len(got.Mounts) != 0 {
+				t.Errorf("mounts = %+v, want none (examples must stay commented)", got.Mounts)
+			}
+			if tc.cfg.Resources == nil && got.Resources != nil {
+				t.Errorf("resources = %+v, want none (example must stay commented)", got.Resources)
+			}
+		})
+	}
+}
+
+func TestTemplateComments(t *testing.T) {
+	out, err := Template(&Config{Version: 1, Image: "tahoe-base"}, generated)
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	text := string(out)
+	// The comments are the deliverable: this file is meant to be edited by hand
+	// afterwards, so the rules that are not obvious from the keys must be there.
+	for _, want := range []string{
+		"pt allow",
+		"2026-08-18T09:00:00Z",
+		GuestProjectPath(),
+		"~",
+		"relative",
+		"rw (default) | ro",
+		"vm_port",
+		"host_port",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("template does not mention %q:\n%s", want, text)
+		}
+	}
+	if !strings.HasPrefix(text, "# "+FileName) {
+		t.Errorf("template does not open with a naming comment:\n%s", text)
+	}
+	if !strings.HasSuffix(text, "\n") {
+		t.Error("template does not end with a newline")
+	}
+}
+
+func TestTemplateOmitsTimestampWhenZero(t *testing.T) {
+	out, err := Template(&Config{Version: 1, Image: "img"}, time.Time{})
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	if strings.Contains(string(out), "Generated by") {
+		t.Errorf("zero time should render no generation line:\n%s", out)
+	}
+	loadTemplate(t, out)
+}
+
+func TestTemplateRefusesInvalidConfigs(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{name: "nil"},
+		{name: "no image", cfg: &Config{Version: 1}},
+		{name: "bad mount name", cfg: &Config{Version: 1, Image: "img", Mounts: []Mount{{Name: "bad name", HostPath: "/tmp"}}}},
+		{name: "duplicate host ports", cfg: &Config{Version: 1, Image: "img", Ports: []Port{{VMPort: 3000}, {VMPort: 9000, HostPort: 3000}}}},
+		{name: "project mount with host_path", cfg: &Config{Version: 1, Image: "img", Mounts: []Mount{{Name: ProjectMountName, HostPath: "/x"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if out, err := Template(tc.cfg, generated); err == nil {
+				t.Errorf("Template succeeded for an invalid config:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestTemplateQuotesAwkwardScalars(t *testing.T) {
+	// An image reference or path that YAML would otherwise reinterpret (a bare
+	// ~, a leading digit, a colon) must survive the round trip verbatim.
+	root := t.TempDir()
+	cfg := &Config{
+		Version: 1,
+		Image:   "12345",
+		Mounts: []Mount{
+			{Name: "tilde", HostPath: "~"},
+			{Name: "colon", HostPath: filepath.Join(root, "a: b")},
+			{Name: "yes", HostPath: "./yes"},
+		},
+	}
+	out, err := Template(cfg, generated)
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	got := loadTemplate(t, out)
+	if got.Image != "12345" {
+		t.Errorf("image = %q, want the string %q", got.Image, "12345")
+	}
+	if !reflect.DeepEqual(got.Mounts, cfg.Mounts) {
+		t.Errorf("mounts = %+v, want %+v", got.Mounts, cfg.Mounts)
+	}
+}
