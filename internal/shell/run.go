@@ -217,6 +217,14 @@ func (r *runner) attach(ctx context.Context) (*state.Instance, *state.Session, e
 			}
 			continue
 		case decCreate:
+			// A seam for the concurrency test only; nil in every real build.
+			// The window this bug lived in — between deciding to create and
+			// claiming the project — is microseconds wide, so a test that
+			// merely starts goroutines and hopes they collide does not reliably
+			// reproduce it, and a test that cannot fail is worse than none.
+			if hookAfterDecideCreate != nil {
+				hookAfterDecideCreate()
+			}
 			created, err := r.create(ctx)
 			if err != nil {
 				return nil, nil, err
@@ -296,28 +304,58 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	// No lock is held from here to the claim below: Negotiate prompts, and a
-	// prompt behind the project lock would block every other pt invocation for
-	// as long as the user takes to answer.
+	name, err := state.NewInstanceName(r.projectID)
+	if err != nil {
+		return false, err
+	}
+
+	// Claim the project BEFORE negotiating ports, not after.
+	//
+	// Negotiating first meant two simultaneous first-run shells both probed the
+	// host ports: the first bound them, and the second saw its own sibling's
+	// probe as EADDRINUSE and asked the user to resolve a conflict that did not
+	// exist. The loser then discarded the answer and attached to the winner's
+	// instance anyway. Claiming first means only one shell ever reaches the
+	// prompt, and the loser returns silently.
+	claimed, err := r.claim(name, nil)
+	if err != nil || !claimed {
+		return false, err
+	}
+
+	// From here on the claim is ours, so every failure path must release it.
+	// Otherwise the next pt shell waits out the whole boot timeout for a
+	// supervisor that was never spawned.
+	release := func(err error) (bool, error) {
+		r.abandon(name)
+		return false, err
+	}
+
+	// The lock is not held across Negotiate: it prompts, and a prompt behind
+	// the project lock would block every other pt invocation for as long as the
+	// user takes to answer. The claim above is what makes that safe.
+	if hookBeforeNegotiate != nil {
+		hookBeforeNegotiate()
+	}
 	forwards, probes, err := ports.Negotiate(ctx, resolved.Ports, ports.Prompter{
 		In:          r.o.In,
 		Out:         r.msg,
 		Interactive: r.o.TTY != nil,
 	})
 	if err != nil {
-		return false, err
+		return release(err)
 	}
 	// Idempotent, and the success path closes explicitly before the spawn; this
 	// covers every failure between here and there.
 	defer func() { _ = probes.Close() }()
 
-	name, err := state.NewInstanceName(r.projectID)
-	if err != nil {
-		return false, err
+	// The record was claimed before the ports were known, so publish them now.
+	if err := r.recordPorts(forwards); err != nil {
+		return release(err)
 	}
+
 	exe, err := r.executable()
 	if err != nil {
-		return false, err
+		return release(err)
 	}
 
 	var stdin bytes.Buffer
@@ -329,13 +367,9 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 		Ports:        forwards,
 		StateRoot:    r.d.Store.Root,
 	}); err != nil {
-		return false, err
+		return release(err)
 	}
 
-	claimed, err := r.claim(name, forwards)
-	if err != nil || !claimed {
-		return false, err
-	}
 	if r.o.Verbose {
 		fmt.Fprintf(r.msg, "creating instance %s (log: %s)\n", name, r.d.Store.LogPath(r.projectID))
 	}
@@ -370,6 +404,26 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 // claim publishes the creating record, or reports false if the project already
 // has one. Both happen in a single lock hold, which is what makes two
 // simultaneous first-runs produce one VM rather than two.
+// recordPorts publishes the negotiated forwards onto the record this shell
+// already claimed, so pt ports can show them while the VM is still creating.
+func (r *runner) recordPorts(forwards []ports.Resolved) error {
+	lk, err := r.d.Store.Lock(r.projectID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lk.Unlock() }()
+
+	inst, err := r.d.Store.ReadInstance(r.projectID)
+	if err != nil {
+		return err
+	}
+	if inst == nil {
+		return fmt.Errorf("shell: the instance record disappeared while ports were being negotiated")
+	}
+	inst.Ports = portMaps(forwards)
+	return r.d.Store.WriteInstance(r.projectID, inst)
+}
+
 func (r *runner) claim(name string, forwards []ports.Resolved) (bool, error) {
 	lk, err := r.d.Store.Lock(r.projectID)
 	if err != nil {

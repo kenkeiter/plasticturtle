@@ -200,6 +200,39 @@ waves are all testable against fakes and will feel deceptively finished.
 
 ---
 
+## 7. Wave-4 audit findings
+
+The spec-conformance audit produced 17 findings. Those fixed are listed with the
+commit that closed them; those recorded are deliberate, and each names why.
+
+### Fixed
+
+| # | Finding | Resolution |
+|---|---|---|
+| F1 | `pt ports` never garbage-collected, though spec §10 names it as a GC site alongside `shell` and `list`. Worse, `GlobalRows` filters dead-supervisor projects *out of the display*, so orphans were neither reported nor reclaimed — disk filled silently. | GC added to `runPorts`, non-fatal, on stderr. |
+| F2 | Every `pt list` column was untested, behind a test named `TestListTableLabelsDiskApproximate` that asserted only the **empty-store** path — where the header and footnote are never emitted. It could not fail on the thing it was named for. | Replaced with `list_test.go`: all eight columns, the `DISK*` footnote, the STATE-override, the `--json` key set, and a GC-warning-does-not-corrupt-JSON case. |
+| F5 | Two simultaneous first-run shells both probed host ports; the second saw its own sibling's probe as `EADDRINUSE` and prompted the user about a conflict that did not exist, then discarded the answer. | `create` now claims the project **before** negotiating ports. Only the winner ever prompts. |
+| — | **Found by F5's test, not by the audit:** `state.acquire` did `MkdirAll` then opened the lock file inside it. A supervisor's teardown removing the project directory between those two steps killed an *unrelated* pt invocation with a bare `no such file or directory`. | A vanished lock file (`ENOENT`, or `EINVAL` when it is unlinked and replaced under an open descriptor) is now treated as contention and retried within a short bounded window. |
+| F7 | `TryRLock`'s doc claimed `pt shell`'s boot poller used it and therefore could not resurrect state. The poller uses `RLock`, which creates. | Doc corrected to state what is actually true, including the consequence. |
+| F8 | `ptcfg.CheckTrustBudget` documented enforcement "by a benchmark"; no benchmark existed anywhere. | `BenchmarkCheckTrust` added: **0.125 ms/op**, 80× under the 10 ms budget, confirming item 20 that the budget is spent on process startup rather than on this code. |
+| F9 | `statusLockWait` was declared twice, in `ports` and in `cmd/pt`, equal only by coincidence — against items 9 and 19. | One `ptcfg.StatusLockWait`. |
+| F14 | `internal/deps` was dead; plan §2 said to delete it once every library was genuinely imported. | Deleted. |
+| F16 | `TestRecoversFromKilledSupervisor` could skip itself, so a green run was not evidence the backstop worked. | Now snapshots the orphan immediately after the kill and fails if it is absent. Passes against a real VM. |
+
+### Recorded, not fixed
+
+| # | Finding | Why |
+|---|---|---|
+| F3 | Spec §7's "print a hint if the login banner suggests a Linux guest" is unimplemented. | The functional fallback (`cd "$HOME"` when the share is absent) works and is tested. The README documents the gap explicitly rather than a best-effort banner sniff being added late. |
+| F6 | `chooseRemoteAddr` probes `vmIp:<port>` from the **host's** stack at tunnel-setup time, when nothing is listening on either candidate. The `127.0.0.1`-vs-`vmIp` fallback of items 3/17 is therefore dead code in practice. | Real, and the audit rates it top-3. The fix needs an additive `sshx` entry point (the frozen `Forward` takes one address) plus lazy per-tunnel latching. **The consequence today: a guest service bound only to the external interface, started after boot, is not reached.** Worth doing next. |
+| F10 | `state.Heartbeat` is the one unlocked mutation of project state, against §3.3. | Safe today, and teardown already works around it by stopping the beat before removing state. Documenting the exemption is honest; adding a lock to a 5-second timer is not obviously an improvement. |
+| F11 | `pt _supervise` boots from its stdin params without consulting `trust.json` or re-checking `ConfigHash`. | Not a `pt shell` bypass — anyone who can run `pt _supervise` can run `tart` directly, so it grants no new capability. But it means trust is a single check rather than a layered one. A cheap hardening exists (re-hash the config, refuse on mismatch) and should be a deliberate decision, not an accident. |
+| F12 | `-v/--verbose` is global but read at exactly one site. | Either wire it or scope it to `shell`; both are real work and neither is a defect. |
+| F13 | `pt ports` emits a `stale` status the spec does not define, and it lands in the documented `--json` contract. | Good addition, well tested. Recorded here so the spec and the JSON consumers agree it exists. |
+| F15 | The exclusive project lock is held across `tart stop`/`tart delete` subprocesses with no deadline, the longest hold in the system. | A wedged `tart` therefore blocks every other invocation for that project until `LockTimeout`. Bounding the context is the fix. |
+| F17 | `trust.json` uses a sidecar lock rather than spec §5's "flock on the file". | The implementation is *better* than the spec text — an flock on an inode that `rename` replaces serializes nothing — but it is a deviation from a normative sentence in the security section, so it is recorded here. |
+| F18 | `sshx.TestServer` links a working SSH server into the shipped binary. | The audit **disproved** this by inspecting the built binary: all 9,928 symbols, zero server-side matches. Go's linker eliminates it because nothing reachable from `main` refers to it. Moving it to `internal/sshxtest` is still tidier — "the linker saves us" is not a property anyone re-verifies — but it is not a live defect. |
+
 ## 6. Definition of done
 
 `make check` green; every §§3–10 MUST traced to an implementation and a test (wave 4K's

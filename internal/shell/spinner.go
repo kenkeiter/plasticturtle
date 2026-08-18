@@ -23,13 +23,16 @@ type spinner struct {
 	drawn bool
 }
 
-// spinner returns an indicator that has already announced itself, so a user
-// waiting on a boot sees something immediately rather than after the first
-// poll interval.
+// spinner returns an indicator that has not announced itself yet.
+//
+// The first frame is deliberately left to the caller's first tick, which comes
+// only after a poll has found the instance not yet ready. Announcing in the
+// constructor would make every attach to an already-running VM print "waiting
+// for VM to boot…" before immediately succeeding — telling the user the tool
+// did something slow when it did nothing at all. The cost is that a genuine
+// boot stays silent for one poll interval.
 func (r *runner) spinner(label string) *spinner {
-	s := &spinner{w: r.msg, label: label, tty: r.o.TTY != nil}
-	s.tick()
-	return s
+	return &spinner{w: r.msg, label: label, tty: r.o.TTY != nil}
 }
 
 // tick draws the next frame. On a terminal it rewrites the same line; anywhere

@@ -16,12 +16,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -74,6 +76,10 @@ const (
 // rather than ptcfg.LockTimeout: a busy project is not an error condition for
 // GC, and `pt list` must never block behind somebody else's `pt shell`.
 const gcLockWait = 5 * ptcfg.LockRetryInterval
+
+// vanishRetryWindow bounds how long an acquire retries a lock file that keeps
+// disappearing underneath it. See acquire.
+const vanishRetryWindow = 10 * ptcfg.LockRetryInterval
 
 // ErrLockBusy reports that a lock could not be taken within its deadline.
 //
@@ -289,13 +295,15 @@ func (s *Store) RLock(projectID string) (*Lock, error) {
 // TryRLock takes the project's shared lock with a caller-chosen deadline,
 // returning ErrLockBusy rather than waiting out ptcfg.LockTimeout.
 //
-// It exists for two callers that must not behave like an interactive command.
-// A status sweep (pt ports --global, pt list) visits every project, so waiting
-// the full ten seconds on each wedged one would cost N×10s; a busy project is
-// a skip, not a failure. And a poller — pt shell waiting for a boot — must not
-// resurrect state: unlike Lock and RLock, this does NOT create the project
-// directory, so a poll that races teardown reports that the project is gone
-// instead of recreating a directory the supervisor just removed.
+// It exists for status sweeps — pt ports --global and pt list — which visit
+// every project, where waiting the full ten seconds on each wedged one would
+// cost N×10s and where a busy project is a skip rather than a failure.
+//
+// Unlike Lock and RLock it does NOT create the project directory, so a caller
+// that only observes cannot resurrect state a supervisor has just removed.
+// Note that pt shell's boot poller does NOT use this and therefore does not
+// have that property: it takes RLock, which creates. The empty directory that
+// leaves behind after a failed boot is reclaimed by the next GCProject.
 //
 // A missing project directory surfaces as an fs.ErrNotExist-wrapped error.
 func (s *Store) TryRLock(projectID string, wait time.Duration) (*Lock, error) {
@@ -310,6 +318,50 @@ func (s *Store) TryRLock(projectID string, wait time.Duration) (*Lock, error) {
 // create distinguishes callers that may bring a project into existence from
 // those that may only observe one; see TryRLock.
 func (s *Store) acquire(projectID string, exclusive bool, wait time.Duration, create bool) (*Lock, error) {
+	// A creating caller retries, within its own deadline, when the directory it
+	// just made is gone again before it can open the lock file inside it.
+	//
+	// This is not hypothetical: a supervisor's teardown removes the whole
+	// project directory, and it can land between the MkdirAll and the open
+	// below. The victim is some entirely unrelated pt invocation, which fails
+	// with a bare "no such file or directory" naming a path it never chose. A
+	// vanished directory means somebody else is finishing up — exactly the
+	// condition the lock's existing wait budget is for — so it is treated like
+	// contention rather than like failure. Found by racing four pt shells at
+	// one project.
+	if !create {
+		return s.acquireOnce(projectID, exclusive, wait, create)
+	}
+
+	// Bounded separately from wait, and tightly: the window between a MkdirAll
+	// and the open inside it is microseconds, so a directory that is still
+	// vanishing after this long is not a race we can wait out. Using the full
+	// lock timeout here would let four contending shells compound into minutes.
+	deadline := time.Now().Add(vanishRetryWindow)
+	for {
+		lk, err := s.acquireOnce(projectID, exclusive, wait, create)
+		if err == nil {
+			return lk, nil
+		}
+		if !vanishedUnderUs(err) || !time.Now().Before(deadline) {
+			return nil, err
+		}
+		time.Sleep(ptcfg.LockRetryInterval)
+	}
+}
+
+// vanishedUnderUs reports whether an acquire failed because the lock file it
+// was working with stopped existing mid-flight.
+//
+// ENOENT is the directory being removed before the open; EINVAL is the file
+// being unlinked and replaced between the open and the flock, which leaves a
+// descriptor the kernel will not lock. Both mean "another process is finishing
+// up here", not "this lock is unobtainable".
+func vanishedUnderUs(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.EINVAL)
+}
+
+func (s *Store) acquireOnce(projectID string, exclusive bool, wait time.Duration, create bool) (*Lock, error) {
 	dir := s.ProjectDir(projectID)
 	if create {
 		if err := os.MkdirAll(dir, dirPerm); err != nil {

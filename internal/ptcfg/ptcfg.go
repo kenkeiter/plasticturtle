@@ -67,6 +67,16 @@ const (
 
 	// LockRetryInterval is the flock polling interval.
 	LockRetryInterval = 20 * time.Millisecond
+
+	// StatusLockWait is how long a read-only status command waits for one
+	// project's shared lock before skipping it.
+	//
+	// Deliberately a small multiple of the poll interval rather than
+	// LockTimeout: a sweep across N wedged projects would otherwise cost
+	// N x LockTimeout, and for a report a busy project is a skip, not a
+	// failure. It lives here rather than in each caller so that pt list and
+	// pt ports --global cannot drift apart.
+	StatusLockWait = 5 * LockRetryInterval
 )
 
 // Shell plugin.

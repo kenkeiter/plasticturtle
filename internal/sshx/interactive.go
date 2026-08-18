@@ -98,6 +98,16 @@ func (c *Client) Interactive(ctx context.Context, command string, tty *os.File) 
 			_, _ = io.Copy(in, tty)
 			_ = in.Close()
 		}()
+	} else {
+		// Without a terminal, stdin must still reach the guest: `pt shell <
+		// script`, a heredoc, and anything driving pt from CI all depend on it.
+		// Leaving it unset gives the remote shell immediate EOF, so it exits 0
+		// having run nothing — a silent success, which is the worst outcome
+		// available.
+		//
+		// The hang that motivates the pipe above cannot happen here: a pipe or
+		// a regular file does reach EOF, so Session.Wait's copier finishes.
+		sess.Stdin = os.Stdin
 	}
 
 	// An empty command means "whatever the guest gives a bare login", which on

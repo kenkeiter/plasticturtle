@@ -13,15 +13,6 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/state"
 )
 
-// statusLockWait is how long GlobalRows will wait for a project's shared lock
-// before skipping it.
-//
-// It is deliberately a small multiple of the flock poll interval rather than
-// ptcfg.LockTimeout: `pt ports --global` is a status command, and a wedged
-// supervisor holding one project's lock must not stall the report on every
-// other project for ten seconds apiece.
-const statusLockWait = 5 * ptcfg.LockRetryInterval
-
 // Status is a forward's live state, as shown by pt ports.
 type Status string
 
@@ -153,7 +144,7 @@ func GlobalRows(ctx context.Context, s *state.Store) ([]Row, error) {
 // for a report: a sweep across N wedged projects would cost N×10s. A busy
 // project is a skip, not a failure.
 func readInstance(s *state.Store, projectID string) (*state.Instance, bool) {
-	lk, err := s.TryRLock(projectID, statusLockWait)
+	lk, err := s.TryRLock(projectID, ptcfg.StatusLockWait)
 	if err != nil {
 		// Busy, or gone between listing and locking. Either way this project
 		// is somebody else's problem right now.

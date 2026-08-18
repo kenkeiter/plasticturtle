@@ -231,6 +231,10 @@ func TestParsePortSpecs(t *testing.T) {
 		{in: "0", wantErr: true},
 		{in: "65536", wantErr: true},
 		{in: "3000:0", wantErr: true},
+		// Caught here rather than by Config.Validate, so pt init can re-prompt
+		// instead of discarding every answer after the form is dismissed.
+		{in: "3000, 3000", wantErr: true},
+		{in: "3000, 9000:3000", wantErr: true},
 	}
 	for _, tc := range tests {
 		got, err := parsePortSpecs(tc.in)
@@ -273,7 +277,10 @@ func TestListJSONIsAnArrayWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestListTableLabelsDiskApproximate(t *testing.T) {
+// The empty store prints a sentence rather than an empty table. The DISK*
+// label and footnote are asserted in list_test.go, where there is a row to
+// render -- with zero rows neither is ever emitted.
+func TestListWithNoInstances(t *testing.T) {
 	e := testEnv(t)
 	var out bytes.Buffer
 	if err := runList(e, &out, false); err != nil {

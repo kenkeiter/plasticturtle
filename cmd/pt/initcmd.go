@@ -210,11 +210,18 @@ func promptPorts() ([]config.Port, error) {
 
 // parsePortSpecs parses "3000, 5432:15432" into port mappings. An omitted host
 // port means "same as the VM port", matching the config file's own default.
+//
+// It rejects duplicate host ports itself rather than leaving that to
+// Config.Validate. The prompt's validator calls this, so catching it here means
+// the user is told while the field is still on screen; catching it later means
+// runInit aborts after the form is dismissed and every answer — including the
+// image choice — is lost.
 func parsePortSpecs(s string) ([]config.Port, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
 	}
+	seen := map[int]bool{}
 	var out []config.Port
 	for _, field := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
 		field = strings.TrimSpace(field)
@@ -227,13 +234,21 @@ func parsePortSpecs(s string) ([]config.Port, error) {
 			return nil, fmt.Errorf("%q: %w", field, err)
 		}
 		p := config.Port{VMPort: vm}
+		effective := vm
 		if hasHost {
 			host, err := parsePort(hostStr)
 			if err != nil {
 				return nil, fmt.Errorf("%q: %w", field, err)
 			}
 			p.HostPort = host
+			effective = host
 		}
+		// Duplicates are checked on the effective host port, so that "3000" and
+		// "9000:3000" collide the same way Config.Validate would see them.
+		if seen[effective] {
+			return nil, fmt.Errorf("host port %d is claimed twice", effective)
+		}
+		seen[effective] = true
 		out = append(out, p)
 	}
 	return out, nil

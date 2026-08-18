@@ -5,17 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"text/tabwriter"
 	"time"
 
+	"github.com/kenkeiter/plasticturtle/internal/ptcfg"
 	"github.com/kenkeiter/plasticturtle/internal/state"
 )
-
-// statusLockWait bounds how long a status command waits for any one project's
-// lock. A report must never block behind somebody else's pt shell, so a busy
-// project is skipped rather than waited on.
-const statusLockWait = 100 * time.Millisecond
 
 // listRow is one instance as pt list reports it. The json tags are a
 // documented interface; renaming one is a breaking change for anything parsing
@@ -39,7 +36,10 @@ func runList(e *env, out io.Writer, jsonOut bool) error {
 	if err := e.Store.GC(ctx, e.Tart); err != nil {
 		// Not fatal. GC failing should not prevent the user from seeing what is
 		// running — that is the information they asked for.
-		fmt.Fprintf(out, "warning: garbage collection failed: %v\n", err)
+		//
+		// It goes to stderr, not out: under --json, a warning on stdout would
+		// prepend a bare line to the array and break every parser downstream.
+		fmt.Fprintf(os.Stderr, "warning: garbage collection failed: %v\n", err)
 	}
 
 	rows, err := collectListRows(e)
@@ -125,7 +125,7 @@ func collectListRows(e *env) ([]listRow, error) {
 // readInstanceForStatus reads a record under a short shared lock, reporting
 // false for anything it cannot promptly and cleanly read.
 func readInstanceForStatus(e *env, projectID string) (*state.Instance, bool) {
-	lk, err := e.Store.TryRLock(projectID, statusLockWait)
+	lk, err := e.Store.TryRLock(projectID, ptcfg.StatusLockWait)
 	if err != nil {
 		return nil, false
 	}

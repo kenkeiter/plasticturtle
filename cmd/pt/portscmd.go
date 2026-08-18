@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/kenkeiter/plasticturtle/internal/config"
@@ -12,6 +14,19 @@ import (
 )
 
 func runPorts(e *env, path string, out io.Writer, global, jsonOut bool) error {
+	// Spec section 10 names pt ports as a garbage-collection site alongside
+	// pt shell and pt list, and it is the one most likely to be run first after
+	// a reboot or a crash. Skipping it here was silent: GlobalRows filters
+	// dead-supervisor projects out of the display, so their orphaned clones and
+	// state directories would go unreported AND unreclaimed until the user
+	// happened to run some other command.
+	//
+	// Non-fatal, and on stderr: a failed sweep must not prevent the user from
+	// seeing the forwards they asked about, nor corrupt --json output.
+	if err := e.Store.GC(context.Background(), e.Tart); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: garbage collection failed: %v\n", err)
+	}
+
 	if global {
 		rows, err := ports.GlobalRows(context.Background(), e.Store)
 		if err != nil {
