@@ -68,6 +68,15 @@ const (
 	// StoppingWaitTimeout bounds waiting for a stopping instance to reach dead
 	// before a re-entering `pt shell` creates a fresh one.
 	StoppingWaitTimeout = 45 * time.Second
+
+	// GuestProbeTimeout bounds the small setup commands pt runs inside the
+	// guest between "the VM is up" and "the user has a prompt" — currently the
+	// terminfo negotiation that decides what TERM the session requests.
+	//
+	// Short on purpose: everything behind it is an improvement on a fallback
+	// that already works, so a guest slow to answer costs the user a plainer
+	// TERM, never a slower prompt.
+	GuestProbeTimeout = 5 * time.Second
 )
 
 // Locking.

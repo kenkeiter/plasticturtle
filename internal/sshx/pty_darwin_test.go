@@ -5,6 +5,7 @@ package sshx
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"io"
 	"os"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 
 	"context"
 
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
 )
 
@@ -206,6 +208,79 @@ func TestInteractiveOnRealPTY(t *testing.T) {
 
 	if restored := termiosOf(t, slave); restored != original {
 		t.Fatalf("terminal not restored: got %+v, want %+v", restored, original)
+	}
+}
+
+// parseModes decodes the encoded terminal-mode string from a pty-req. The wire
+// format is a sequence of (opcode byte, uint32) pairs terminated by opcode 0.
+func parseModes(t *testing.T, s string) map[uint8]uint32 {
+	t.Helper()
+	modes := map[uint8]uint32{}
+	b := []byte(s)
+	for len(b) > 0 {
+		op := b[0]
+		if op == 0 { // TTY_OP_END
+			return modes
+		}
+		if len(b) < 5 {
+			t.Fatalf("truncated mode string at opcode %d", op)
+		}
+		modes[op] = binary.BigEndian.Uint32(b[1:5])
+		b = b[5:]
+	}
+	return modes
+}
+
+// TestInteractiveForwardsTerminalModes is the regression test for backspace.
+//
+// The guest's PTY is where canonical input happens once the local terminal is
+// raw, so it needs the user's real control characters. Sending only ECHO left
+// the guest's kernel to pick its own VERASE, which is how a host that erases
+// with one character ends up talking to a guest that erases with another.
+func TestInteractiveForwardsTerminalModes(t *testing.T) {
+	master, slave := openPTY(t)
+	_ = master
+
+	// A deliberately unusual erase character: the default would pass whether or
+	// not anything was forwarded.
+	const wantErase = 0x08 // ^H
+	tio := termiosOf(t, slave)
+	tio.Cc[unix.VERASE] = wantErase
+	tio.Cc[unix.VINTR] = 0x02 // ^B, equally unusual
+	if err := unix.IoctlSetTermios(int(slave.Fd()), unix.TIOCSETA, &tio); err != nil {
+		t.Fatalf("set termios: %v", err)
+	}
+
+	srv, c := dialTestServer(t)
+	ptys := make(chan ptyPayload, 4)
+	srv.setSessionHooks(func(p ptyPayload) bool { ptys <- p; return true }, nil)
+	srv.SetExecHandler(func(string, io.Reader, io.Writer, io.Writer) int { return 0 })
+
+	if _, err := c.Interactive(context.Background(), "true", slave); err != nil {
+		t.Fatalf("Interactive: %v", err)
+	}
+
+	select {
+	case p := <-ptys:
+		modes := parseModes(t, p.Modes)
+		if got := modes[ssh.VERASE]; got != wantErase {
+			t.Errorf("guest VERASE = %#x, want %#x — backspace will not erase in the guest", got, wantErase)
+		}
+		if got := modes[ssh.VINTR]; got != 0x02 {
+			t.Errorf("guest VINTR = %#x, want 0x2", got)
+		}
+		// The settings that make a guest PTY usable at all, and the ones the
+		// old three-entry mode map left to the guest kernel's defaults.
+		for _, m := range []struct {
+			name string
+			op   uint8
+		}{{"ECHO", ssh.ECHO}, {"ICANON", ssh.ICANON}, {"ISIG", ssh.ISIG}, {"OPOST", ssh.OPOST}} {
+			if modes[m.op] != 1 {
+				t.Errorf("guest %s = %d, want 1", m.name, modes[m.op])
+			}
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("no pty-req reached the guest")
 	}
 }
 

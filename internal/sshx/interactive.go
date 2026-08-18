@@ -18,12 +18,18 @@ import (
 // mirrors that so a script can tell "the VM said no" from "we never got in".
 const transportExitCode = 255
 
-// defaultTerm is used when the host has no TERM. Something is better than the
-// empty string, which makes curses programs in the guest refuse to start.
-const defaultTerm = "xterm-256color"
+// fallbackModes is what the guest PTY gets when the local terminal's settings
+// cannot be read. ECHO is the one that matters: with the local terminal in raw
+// mode, nothing echoes what the user types unless the guest does.
+var fallbackModes = ssh.TerminalModes{
+	ssh.ECHO:          1,
+	ssh.TTY_OP_ISPEED: 14400,
+	ssh.TTY_OP_OSPEED: 14400,
+}
 
 // Interactive runs command on the guest with a PTY attached to tty, mirroring
-// its size and TERM, forwarding SIGWINCH on resize, and putting the local
+// its size, its terminal settings and — after negotiating one the guest can
+// resolve — its TERM, forwarding SIGWINCH on resize, and putting the local
 // terminal in raw mode for the duration.
 //
 // It returns the remote command's exit status, which pt shell exits with. Raw
@@ -44,6 +50,16 @@ func (c *Client) Interactive(ctx context.Context, command string, tty *os.File) 
 	if isTTY {
 		fd := int(tty.Fd())
 
+		// Both of these happen before raw mode, and must. localModes has to see
+		// the user's real settings rather than the ones we are about to impose,
+		// and negotiateTerm is a round-trip to the guest that has no business
+		// running with the local terminal already raw.
+		modes, ok := localModes(fd)
+		if !ok {
+			modes = fallbackModes
+		}
+		termName := c.negotiateTerm(ctx, os.Getenv("TERM"))
+
 		// The restore is deferred before anything else can fail, so it runs on
 		// every path out of this function including a panic unwinding through
 		// it. Everything below this point may fail freely.
@@ -56,16 +72,6 @@ func (c *Client) Interactive(ctx context.Context, command string, tty *os.File) 
 		width, height, sizeErr := term.GetSize(fd)
 		if sizeErr != nil || width <= 0 || height <= 0 {
 			width, height = 80, 24
-		}
-		termName := os.Getenv("TERM")
-		if termName == "" {
-			termName = defaultTerm
-		}
-		modes := ssh.TerminalModes{
-			// Echo is the guest PTY's job now that the local terminal is raw.
-			ssh.ECHO:          1,
-			ssh.TTY_OP_ISPEED: 14400,
-			ssh.TTY_OP_OSPEED: 14400,
 		}
 		if err := sess.RequestPty(termName, height, width, modes); err != nil {
 			return transportExitCode, fmt.Errorf("request pty: %w", err)

@@ -30,7 +30,7 @@ What you do not get:
 - **The project directory is read-write from the guest by default.** Anything
   running in the VM can rewrite your repo, including `.plasticturtle` itself and
   any git hooks, `Makefile`, or CI config in it. Set `mode: ro` on the reserved
-  `project` mount if you do not want that.
+  `project` mount if you do not want that. _Note_: If `.plasticturtle` _is_ modified, you must approve changes using `pt allow` before Plastic Turtle will allow futher interaction.
 - **The guest has unrestricted outbound network access.** `pt` does not firewall
   it. An agent in the VM can reach the internet, your LAN, and any service
   listening on your host's LAN address.
@@ -292,6 +292,25 @@ Exit status:
 | `255` | the SSH session never happened or was lost mid-flight (ssh(1)'s convention) |
 
 Diagnostics go to stderr, so the guest shell's stdout stays clean for redirection.
+
+#### The terminal in the guest
+
+When stdin is a terminal, `pt shell` gives the guest a PTY that mirrors the
+host's: the same size, the same control characters (erase, interrupt, suspend,
+flow control), and — where it can — the same `TERM`.
+
+`TERM` needs a negotiation because terminals like Ghostty, kitty and WezTerm
+ship a terminfo entry of their own and install it only on the host. A guest
+handed a name it cannot resolve gets no cursor-movement capabilities, and the
+first thing you notice is that **backspace stops erasing**. So `pt` asks the
+guest whether it knows the name, and if it does not, compiles the host's own
+description into `$HOME/.terminfo` in the guest with `tic`. If that fails — no
+`tic`, no writable home, an entry the host cannot describe — the session falls
+back to `xterm-256color`, which is plainer but always works.
+
+The whole exchange is bounded by a short timeout and never blocks the prompt: a
+slow guest costs you a plainer `TERM`, not a slower shell. Nothing is written
+outside the clone, which is discarded at teardown.
 
 ### `pt list`
 
@@ -587,4 +606,5 @@ rm -rf ~/.local/state/plasticturtle/instances/<project-id>
 | `the VM did not become ready within 2m0s` | image still pulling, or the guest never got a DHCP lease. Check the log; pre-`tart pull` the image |
 | `VM terminated unexpectedly; see .../supervisor.log` | the `tart run` child exited under a live session |
 | a stray `pt-*` VM in `tart list` | run `pt list`; the orphan sweep deletes `pt-*` VMs no record claims |
+| backspace does not erase, arrow keys print escapes | the guest could not be taught your `TERM` and fell back. Check `infocmp "$TERM"` inside the guest; a guest image without `tic` cannot be taught one. `TERM=xterm-256color pt shell` sidesteps it |
 | `DISK*` shows ~30G for a VM that just booted | expected. See [`pt list`](#pt-list) |

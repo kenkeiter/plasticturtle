@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -26,6 +27,8 @@ type TestServer struct {
 	// PTY it claims to, and to make pty-req fail on demand.
 	onPTY   func(ptyPayload) bool
 	onWinch func(windowChangePayload)
+	// onTerminfo answers the terminfo negotiation. See setTerminfoHandler.
+	onTerminfo func(cmd string, stdin io.Reader) int
 
 	closeOnce sync.Once
 	closeErr  error
@@ -116,6 +119,36 @@ func (s *TestServer) hooks() (func(ptyPayload) bool, func(windowChangePayload)) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.onPTY, s.onWinch
+}
+
+// setTerminfoHandler installs the guest's answer to the terminfo probe and
+// install commands Interactive runs before every PTY session.
+//
+// Those commands are answered here rather than by the installed exec handler
+// because they are infrastructure, not something the test asked to run: routing
+// them through a handler a test wrote for its own command would deadlock the
+// moment that handler blocked, and would make every test that merely wants a
+// PTY reason about terminfo. The default reports a guest that already knows
+// every terminal name, which is the case where negotiation is invisible.
+func (s *TestServer) setTerminfoHandler(fn func(cmd string, stdin io.Reader) int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onTerminfo = fn
+}
+
+func (s *TestServer) terminfoHandler() func(string, io.Reader) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.onTerminfo == nil {
+		return func(string, io.Reader) int { return 0 }
+	}
+	return s.onTerminfo
+}
+
+// isTerminfoCommand reports whether cmd is part of the terminfo negotiation
+// rather than a command a caller asked to run.
+func isTerminfoCommand(cmd string) bool {
+	return cmd == terminfoInstallCommand || strings.HasPrefix(cmd, "infocmp ")
 }
 
 // Close stops the server.
@@ -294,7 +327,12 @@ func (s *TestServer) session(newCh ssh.NewChannel) {
 func (s *TestServer) run(ch ssh.Channel, cmd string) {
 	defer s.wg.Done()
 
-	code := s.handler()(cmd, ch, ch, ch.Stderr())
+	var code int
+	if isTerminfoCommand(cmd) {
+		code = s.terminfoHandler()(cmd, ch)
+	} else {
+		code = s.handler()(cmd, ch, ch, ch.Stderr())
+	}
 
 	_ = ch.CloseWrite()
 	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(code)}))
