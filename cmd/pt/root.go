@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kenkeiter/plasticturtle/internal/banner"
 	"github.com/kenkeiter/plasticturtle/internal/shell"
 	"github.com/kenkeiter/plasticturtle/internal/sshx"
 	"github.com/kenkeiter/plasticturtle/internal/sys"
@@ -41,6 +42,17 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Version:       version,
+		// Bare `pt` is someone looking around rather than asking for anything,
+		// so it gets the logo above the usage cobra would have printed on its
+		// own. NoArgs keeps `pt bogus` an unknown-command error instead of
+		// quietly showing the banner.
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			banner.Fprint(cmd.OutOrStdout())
+			// Help writes to the same place and can only fail if that write
+			// fails, which is not worth reporting on a torn-down stdout.
+			_ = cmd.Help()
+		},
 	}
 
 	root.PersistentFlags().BoolVar(&global.JSON, "json", false, "machine-readable output (list, ports)")

@@ -1,15 +1,17 @@
 # Plastic Turtle 🐢
 
-Plastic Turtle is a simple sandboxing tool that allows you to work with your projects in dedicated, disposable [Tart](https://tart.run) VM instances. This is useful when you want to [`--dangerously-skip-permissions`](https://code.claude.com/docs/en/permission-modes).
+Plastic Turtle is a pretty good sandboxing tool. It allows you to work with your projects in dedicated, ephemeral [Tart](https://tart.run) VM instances. It can forward ports to your host machine, and supports domain-based outbound  firewall rules. Primarily, Plastic Turtle is intended to allow you to [`--dangerously-skip-permissions`](https://code.claude.com/docs/en/permission-modes); however, it's a nice place to play regardless of whether you're using it with an LLM or not.
 
-Using Plastic Turtle (`pt`) is simple:
+## Quick Start
+
+Using Plastic Turtle (`pt`) is pretty straightforward:
 
 1. 🐢 **Add a `.plasticturtle` config to your project** – From your project directory, run `pt init`; you will be prompted to choose a base image and other parameters! A `.plasticturtle` file will be created in your project directory.
 
-2. 🌴🪏 **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will 
+2. 🏖️🪏 **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will 
 share the same VM for that project.
 
-3. 🧹 **Don't worry about cleanup!** – The sand stays in the turtle. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
+3. 🧹🐢 **Don't worry about cleanup!** – The sand stays in the turtle. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
 
 Couple of #protips: 
 
@@ -22,32 +24,6 @@ Plastic Turtle provides two types of isolation:
 
 1. a separate guest OS with its own kernel, filesystem, users, network stack) running within the Apple Virtualization Framework.
 2. a network firewall that may be configured to prevents processes running in Plastic Turtle from accessing domains other than those they explicitly configure.
-
-What you get:
-
-- A separate guest OS with its own kernel, filesystem, users and network stack,
-  running under the Apple Virtualization framework.
-- Exactly the host directories named in `.plasticturtle`, and no others. By
-  default that is one directory: the project.
-- Host ports opened only by explicit configuration, and only on `127.0.0.1`.
-- No persistence. Every session group starts from a fresh clone of the image;
-  writes inside the guest that are not under a shared directory are discarded
-  at teardown.
-
-What you do not get:
-
-- **The project directory is read-write from the guest by default.** Anything
-  running in the VM can rewrite your repo, including `.plasticturtle` itself and
-  any git hooks, `Makefile`, or CI config in it. Set `mode: ro` on the reserved
-  `project` mount if you do not want that. _Note_: If `.plasticturtle` _is_ modified, you must approve changes using `pt allow` before Plastic Turtle will allow futher interaction.
-- **The guest has unrestricted outbound network access _by default_.** An agent
-  in the VM can reach the internet, your LAN, and any service listening on your
-  host's LAN address. A project can opt into a domain allowlist with a
-  `network:` policy — see [Network firewall](#network-firewall) — which changes
-  this to default-deny.
-- No defense against a VM escape, and no hardening of the guest image beyond
-  what the image ships with.
-- Guest SSH host keys are not verified (see [Security notes](#security-notes)).
 
 ## Requirements
 
@@ -198,16 +174,6 @@ Additional rules:
   first in the list, at `/Volumes/My Shared Files/project` in a macOS guest.
   Listing `name: project` in `mounts[]` only changes its `mode`; it may not
   redirect it elsewhere.
-
-### `resources.cpu: 0` means inherit
-
-The design document says `resources.cpu` must be `>= 1`. The implementation
-does not, and deliberately: after YAML decoding, an absent `cpu` and a literal
-`cpu: 0` are indistinguishable, so rejecting `0` would make the perfectly
-reasonable `resources: {memory: 8192}` fail validation. `0` therefore means
-"inherit from the image" and passes validation; only negative values are
-rejected. The same holds for `resources.memory`. `tart set` is invoked only for
-the fields that are non-zero, and not at all when both are.
 
 ## Trust
 
@@ -509,6 +475,34 @@ The negotiation is done by `pt shell`, not the supervisor, because the superviso
 is detached and has nothing to prompt on. The shell holds each probe listener
 until the instant before it spawns the supervisor, which then re-binds; that gap
 is a race, and the supervisor retries once if it loses.
+
+## Security
+
+What you get:
+
+- A separate guest OS with its own kernel, filesystem, users and network stack,
+  running under the Apple Virtualization framework.
+- Exactly the host directories named in `.plasticturtle`, and no others. By
+  default that is one directory: the project.
+- Host ports opened only by explicit configuration, and only on `127.0.0.1`.
+- No persistence. Every session group starts from a fresh clone of the image;
+  writes inside the guest that are not under a shared directory are discarded
+  at teardown.
+
+What you do not get:
+
+- **The project directory is read-write from the guest by default.** Anything
+  running in the VM can rewrite your repo, including `.plasticturtle` itself and
+  any git hooks, `Makefile`, or CI config in it. Set `mode: ro` on the reserved
+  `project` mount if you do not want that. _Note_: If `.plasticturtle` _is_ modified, you must approve changes using `pt allow` before Plastic Turtle will allow futher interaction.
+- **The guest has unrestricted outbound network access _by default_.** An agent
+  in the VM can reach the internet, your LAN, and any service listening on your
+  host's LAN address. A project can opt into a domain allowlist with a
+  `network:` policy — see [Network firewall](#network-firewall) — which changes
+  this to default-deny.
+- No defense against a VM escape, and no hardening of the guest image beyond
+  what the image ships with.
+- Guest SSH host keys are not verified (see [Security notes](#security-notes)).
 
 ## Network firewall
 
