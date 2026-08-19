@@ -1,29 +1,46 @@
 # Plastic Turtle 🐢
 
-Plastic Turtle is a pretty good sandboxing tool. It allows you to work with your projects in dedicated, ephemeral [Tart](https://tart.run) VM instances. It can forward ports to your host machine, and supports domain-based outbound  firewall rules. Primarily, Plastic Turtle is intended to allow you to [`--dangerously-skip-permissions`](https://code.claude.com/docs/en/permission-modes); however, it's a nice place to play regardless of whether you're using it with an LLM or not.
+**Plastic Turtle is a pretty good sandbox.** It gives you (and your agents!) a reasonably safe environment to play in, keeps bad stuff from getting in, and makes it easy for good stuff to get out.
+
+Plastic Turtle gives you a low friction means of working with your projects in dedicated, ephemeral [Tart](https://tart.run) VM instances. It includes a domain-based outbound firewall that allows you to define exactly which domains the sandbox VM and programs running on it are allowed to communicate with. It can also forward ports from services in the VM to the host.
+
+Plastic Turtle is intended to allow you to [`--dangerously-skip-permissions`](https://code.claude.com/docs/en/permission-modes); however, it's a nice place to play regardless of whether you're using it with an LLM or not.
 
 ## Quick Start
 
-Using Plastic Turtle (`pt`) is pretty straightforward:
+Make sure you have the prerequisites! If you don't already have Tart installed, you're [gonna need it](https://tart.run/quick-start/)! You can grab Tart and get a macOS Tahoe base image by doing the following:
+
+```sh
+$ brew install cirruslabs/cli/tart
+$ tart clone ghcr.io/cirruslabs/macos-tahoe-base:latest tahoe-base
+# this is going to download a ~27GB macOS Tahoe base image; one sec...
+```
+
+The easiest way to install Plastic Turtle is using Homebrew:
+
+```sh
+brew install kenkeiter/tap/plasticturtle
+```
+
+Once you've got it, using Plastic Turtle (`pt`) is pretty straightforward:
 
 1. 🐢 **Add a `.plasticturtle` config to your project** – From your project directory, run `pt init`; you will be prompted to choose a base image and other parameters! A `.plasticturtle` file will be created in your project directory.
 
-2. 🏖️🪏 **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will 
-share the same VM for that project.
+2. 🏖️🪏 **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will share the same VM for that project.
 
 3. 🧹🐢 **Don't worry about cleanup!** – The sand stays in the turtle. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
 
 Couple of #protips: 
 
-- If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory. _Critically, this cannot be run from within the VM itself_ – but it's nice to allow an agent to suggest changes.
+- If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory. _Critically, this cannot be run from within the VM itself_ – but your project's `.plasticturtle` remains editable by the agent, which can be a nice way for the agent to understand its limitations and suggest changes.
 - Run `pt list` to see everything that's running.
 
 ## Security
 
 Plastic Turtle provides two types of isolation: 
 
-1. a separate guest OS with its own kernel, filesystem, users, network stack) running within the Apple Virtualization Framework.
-2. a network firewall that may be configured to prevents processes running in Plastic Turtle from accessing domains other than those they explicitly configure.
+1. a separate guest OS with its own kernel, filesystem, users, network stack running within the Apple Virtualization Framework.
+2. a network firewall that may be configured to prevent processes running in Plastic Turtle from accessing domains other than those they explicitly configure.
 
 ## Requirements
 
@@ -112,10 +129,9 @@ default. A second `pt shell` in another terminal attaches to the same VM rather
 than booting a new one. When the last one exits, the VM stops and the clone is
 deleted; the only thing that outlives it is `trust.json`.
 
-## `.plasticturtle`
+## Configuration
 
-Checked into the repo, human-edited, and inert until `pt allow` approves its
-exact bytes.
+To use Plastic Turtle, your project must have a `.plasticturtle` file. This file configures the VM itself, files shared between the host and the VM, outbound network access, and port forwarding.
 
 ```yaml
 version: 1
@@ -140,6 +156,16 @@ mounts:
   - name: scratch
     host_path: ./scratch
     mode: rw
+
+network:
+  policy: restricted
+  allow:
+    - "anthropic.com"
+    - "*.anthropic.com"
+    - "claude.com"
+    - "*.claude.com"
+    - "claude.ai"
+    - "*.claude.ai"
 ```
 
 ### Fields
@@ -161,10 +187,6 @@ mounts:
 
 Additional rules:
 
-- **Strict decoding.** An unknown key at any level is an error, not a warning. A
-  typo in a security-relevant file should cost you one run, not one incident.
-- **One document.** A second `---` YAML document in the file is an error: it
-  would be invisible to somebody reading the first.
 - **`host_path` expansion.** `~` is the invoking user's home. `~otheruser` is
   rejected rather than silently treated as a relative directory. Relative paths
   resolve against the project directory, never the working directory. Every
@@ -177,12 +199,11 @@ Additional rules:
 
 ## Trust
 
-A `.plasticturtle` names the image a project boots, the host directories it
-exposes, and the host ports it opens. That is a lot of authority for a file that
-arrives with a `git clone` — or that an agent with write access to the repo can
-edit between one `pt shell` and the next.
+"Aha," you say "but if the `.plasticturtle` file is exposed in the VM, it can be edited from the VM!" Yep, that's by design. In my experiments, it's been a nice way for the agent to understand its limitations and also to request changes to support your application. 
 
-So the file does nothing until you approve it:
+But obviously, you shouldn't blindly accept those suggestions – that's why **`pt shell` does not act upon a `.plasticturtle` configuration until you explicitly approve that configuration.** When you run `pt allow` it shows you a summary of what changed, and you must explicitly approve it before running `pt shell`. 
+
+An example might look like this:
 
 ```
 $ pt allow
@@ -297,11 +318,10 @@ on the create path — the easiest way to find that log.
 
 #### `--persist`
 
-`pt shell --persist` boots the image named by `image:` **itself**, instead of a
+`pt shell --persist` boots the base image **itself**, instead of a
 throwaway clone of it. Everything the guest writes — packages you install, tools
-you configure, a Homebrew prefix you spent twenty minutes on — is still there
-next time, and every ordinary `pt shell` afterwards clones from an image that
-already has it.
+you configure, etc. — is still there next time, and every ordinary `pt shell` 
+afterwards clones from an image that already has it.
 
 That is the whole feature, and it is worth being clear about what it costs:
 
@@ -783,3 +803,9 @@ rm -rf ~/.local/state/plasticturtle/instances/<project-id>
 | a stray `pt-*` VM in `tart list` | run `pt list`; the orphan sweep deletes `pt-*` VMs no record claims |
 | backspace does not erase, arrow keys print escapes | the guest could not be taught your `TERM` and fell back. Check `infocmp "$TERM"` inside the guest; a guest image without `tic` cannot be taught one. `TERM=xterm-256color pt shell` sidesteps it |
 | `DISK*` shows ~30G for a VM that just booted | expected. See [`pt list`](#pt-list) |
+
+## License
+
+Plastic Turtle is released under the MIT license (see the `LICENSE` file).
+
+Copyright (c) 2026 Ken Keiter
