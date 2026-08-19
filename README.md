@@ -13,7 +13,7 @@ share the same VM for that project.
 
 Couple of #protips: 
 
-- If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory.
+- If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory. _Critically, this cannot be run from within the VM itself_ – but it's nice to allow an agent to suggest changes.
 - Run `pt list` to see everything that's running.
 
 ## Security
