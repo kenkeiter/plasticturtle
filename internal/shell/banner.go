@@ -20,16 +20,30 @@ import (
 
 // Banner colors, xterm-256. The dark green background is what makes the row
 // read as chrome rather than guest output; white and palegreen1 are the only
-// two foregrounds on it.
+// two foregrounds on it. Bold (undone by bannerUnbold) is reserved for the
+// egress warning, the one thing on the row that is not merely informative.
 const (
-	bannerBG    = "\x1b[48;5;22m"  // dark green
-	bannerWhite = "\x1b[38;5;15m"  // white
-	bannerGreen = "\x1b[38;5;121m" // palegreen1
+	bannerBG     = "\x1b[48;5;22m"  // dark green
+	bannerWhite  = "\x1b[38;5;15m"  // white
+	bannerGreen  = "\x1b[38;5;121m" // palegreen1
+	bannerBold   = "\x1b[1m"
+	bannerUnbold = "\x1b[22m"
 )
 
 // bannerNameMax caps the image-name segment so one long OCI reference cannot
-// eat the whole row.
-const bannerNameMax = 24
+// eat the whole row; bannerProjectMax does the same for the directory name,
+// more tightly, because it is the segment that yields first when the row is
+// short.
+const (
+	bannerNameMax    = 24
+	bannerProjectMax = 20
+)
+
+// bannerEgressWarning is the centered alarm shown when the guest's outbound
+// network is unrestricted. It sits in the middle of the row, between the
+// sandbox's identity and its figures, rather than beside the name, so that it
+// reads as a property of the session as a whole.
+const bannerEgressWarning = "⚠️ Unrestricted Egress"
 
 // bannerStats are the figures the poll loop feeds the renderer. Comparable on
 // purpose: "did anything change" is one struct compare.
@@ -40,12 +54,29 @@ type bannerStats struct {
 	haveUsage bool
 }
 
-// banner is the status line pt shell shows while a session is attached: the
-// sandbox identity on the left, the instance's live figures on the right.
-type banner struct {
+// bannerOpts is what the row needs to know about the session it is describing.
+//
+// It carries two names because they serve different masters: image is what the
+// row displays (the instance name is a generated handle nobody recognizes),
+// while vmName is what locates the VM's disk for the usage sampler. Under
+// --persist they are the same name arriving by two routes.
+type bannerOpts struct {
 	image   string // the base image the sandbox was cloned from
+	project string // the directory holding .plasticturtle, by its base name
 	warnNet bool   // network policy is open: say so, loudly
-	persist bool   // this VM *is* the base image: say that too
+	vmName  string // the VM as tart knows it, for the usage sampler
+	vmPID   int
+	persist bool // this VM *is* the base image: say that too
+}
+
+// banner is the status line pt shell shows while a session is attached: the
+// sandbox identity on the left, the egress warning in the middle, the
+// instance's live figures on the right.
+type banner struct {
+	image   string
+	project string
+	warnNet bool
+	persist bool
 	line    *sshx.StatusLine
 
 	// usage samples the VM's host-side CPU and memory; nil means the figures
@@ -56,35 +87,37 @@ type banner struct {
 	stats bannerStats
 }
 
-// newBanner takes both names because they serve different masters: image is
-// what the row displays (the instance name is a generated handle nobody
-// recognizes), while vmName is what locates the VM's disk for the usage
-// sampler. Under --persist they are the same name arriving by two routes.
-func newBanner(image string, warnNet bool, vmName string, vmPID int, persist bool) *banner {
-	b := &banner{image: image, warnNet: warnNet, persist: persist}
-	b.usage = newUsageSampler(vmName, vmPID).sample
+func newBanner(o bannerOpts) *banner {
+	b := &banner{image: o.image, project: o.project, warnNet: o.warnNet, persist: o.persist}
+	b.usage = newUsageSampler(o.vmName, o.vmPID).sample
 	b.line = &sshx.StatusLine{Render: b.render}
 	return b
 }
+
+// seg is one piece of the row: the plain text width accounting is done on, and
+// the styled string that must render exactly those cells.
+type seg struct {
+	plain, styled string
+}
+
+func (s seg) width() int { return cellWidth(s.plain) }
 
 // render produces the styled row, at most width cells wide. It runs under the
 // status bar's lock (see sshx.StatusLine), so it only formats — the slow work
 // happened in the poll loop.
 //
-// Degradation order when the terminal narrows: the right-hand figures go
-// first, then the network warning, then the name; the turtle is last to go.
+// Degradation order when the terminal narrows: the project name goes first,
+// then the right-hand figures, then the egress warning, then the label; the
+// image name and the turtle are the last two to go.
 func (b *banner) render(width int) string {
 	b.mu.Lock()
 	st := b.stats
 	b.mu.Unlock()
 
 	name := truncateTail(b.image, bannerNameMax)
-	warn := ""
-	if b.warnNet {
-		warn = " ⚠️ unrestricted network"
-	}
+	project := truncateTail(b.project, bannerProjectMax)
 
-	// The word carries the one fact a user cannot recover by looking around:
+	// The label carries the one fact a user cannot recover by looking around:
 	// whether what they type here survives the session. It replaces "Sandbox"
 	// rather than joining it so that the row's width behavior — and every
 	// narrowing step below — is unchanged.
@@ -93,37 +126,118 @@ func (b *banner) render(width int) string {
 		label = "Persistent"
 	}
 
-	// Each candidate is (plain text for width accounting, styled equivalent).
-	// The styled string must render exactly the plain one's cells.
-	left := func(name, warn string) (string, string) {
-		plain := " 🐢 " + label + " [" + name + "]" + warn + " "
-		styled := bannerWhite + " 🐢 " + label + " " + bannerGreen + "[" + name + "]" + bannerWhite + warn + " "
-		return plain, styled
+	var warn seg
+	if b.warnNet {
+		warn = seg{
+			plain:  bannerEgressWarning,
+			styled: bannerBold + bannerWhite + bannerEgressWarning + bannerUnbold,
+		}
 	}
-
 	right := b.rightText(st)
 
 	// The row is painted onto a background-colored ESC[2K erase, so a render
 	// narrower than the terminal still leaves a fully green row; only content
 	// wider than the terminal is dangerous (it wraps into the guest's rows).
-	plain, styled := left(name, warn)
-	switch lw, rw := cellWidth(plain), cellWidth(right); {
-	case right != "" && lw+rw+1 <= width:
-		pad := strings.Repeat(" ", width-lw-rw)
-		return bannerBG + "\x1b[2K" + styled + pad + bannerGreen + right
-	case lw <= width:
-		return bannerBG + "\x1b[2K" + styled
+	//
+	// Candidates in strict preference order: everything, then the same without
+	// the figures, then without the warning, and within each of those the
+	// project name is given up before the image name. Dropping the project
+	// ahead of either of the other two is deliberate — the figures are the
+	// row's live content and the warning is its alarm, while the directory is
+	// something the user's own prompt is about to tell them anyway.
+	lefts := [2]seg{leftSeg(label, name, project), leftSeg(label, name, "")}
+	for _, want := range [4]struct{ warn, right bool }{{true, true}, {true, false}, {false, true}, {false, false}} {
+		if (want.warn && warn.plain == "") || (want.right && right == "") {
+			continue // nothing to place; a later, weaker candidate covers it
+		}
+		for _, left := range lefts {
+			w, r := seg{}, ""
+			if want.warn {
+				w = warn
+			}
+			if want.right {
+				r = right
+			}
+			if row, ok := layout(width, left, w, r); ok {
+				return row
+			}
+		}
 	}
-	if plain, styled = left(name, ""); cellWidth(plain) <= width {
-		return bannerBG + "\x1b[2K" + styled
-	}
-	if plain = " 🐢 [" + name + "] "; cellWidth(plain) <= width {
+	if plain := " 🐢 [" + name + "] "; cellWidth(plain) <= width {
 		return bannerBG + "\x1b[2K" + bannerWhite + " 🐢 " + bannerGreen + "[" + name + "] "
 	}
 	if cellWidth(" 🐢 ") <= width {
 		return bannerBG + "\x1b[2K" + " 🐢 "
 	}
 	return bannerBG + "\x1b[2K"
+}
+
+// leftSeg builds the row's identity: the turtle, what kind of VM this is, the
+// image it came from, and the project directory it belongs to. An empty
+// project drops that last part entirely, which is how the row narrows.
+func leftSeg(label, name, project string) seg {
+	plain, styled := "", ""
+	if project != "" {
+		plain = " · " + project
+		styled = bannerWhite + " · " + project
+	}
+	return seg{
+		plain:  " 🐢 " + label + " [" + name + "]" + plain + " ",
+		styled: bannerWhite + " 🐢 " + label + " " + bannerGreen + "[" + name + "]" + styled + " ",
+	}
+}
+
+// layout places left at the row's head, warn centered in the gap between its
+// two neighbors, and right flush to the row's tail. It is all-or-nothing:
+// false means this exact combination does not fit in width, and the caller
+// should offer a weaker one. Dropping pieces here instead would let a wide
+// left segment quietly outrank the warning, which is the opposite of the
+// intended priority.
+//
+// Centering between the segments rather than on the row costs the warning a
+// stable column — the figures change width whenever the CPU reading gains or
+// loses a digit, which shifts it by a cell — but it buys back the space true
+// centering wasted on the left, which is what keeps the project name on the
+// row at ordinary terminal widths.
+func layout(width int, left, warn seg, right string) (string, bool) {
+	lw, cw, rw := left.width(), warn.width(), cellWidth(right)
+	if lw > width {
+		return "", false
+	}
+
+	start := 0
+	if cw > 0 {
+		// The gap has to hold the warning plus a cell of clearance on each
+		// side, so it never abuts the name or the figures.
+		gap := width - lw - rw
+		if gap < cw+2 {
+			return "", false
+		}
+		start = lw + (gap-cw)/2
+	} else if rw > 0 && lw+rw+1 > width {
+		return "", false
+	}
+	return paint(width, left, warn, start, right), true
+}
+
+// paint assembles a row the caller has already proven fits: left at column
+// zero, warn at column start, right ending at the row's last column. The
+// background is set once and never reset, so the padding between segments
+// carries it too.
+func paint(width int, left, warn seg, start int, right string) string {
+	var sb strings.Builder
+	sb.WriteString(bannerBG + "\x1b[2K" + left.styled)
+	col := left.width()
+	if warn.plain != "" {
+		sb.WriteString(strings.Repeat(" ", start-col))
+		sb.WriteString(warn.styled)
+		col = start + warn.width()
+	}
+	if right != "" {
+		sb.WriteString(strings.Repeat(" ", width-cellWidth(right)-col))
+		sb.WriteString(bannerGreen + right)
+	}
+	return sb.String()
 }
 
 // rightText formats the live figures, without color: the caller styles it.

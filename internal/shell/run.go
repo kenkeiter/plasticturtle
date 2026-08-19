@@ -664,7 +664,16 @@ func (r *runner) session(ctx context.Context, inst *state.Instance) (int, error)
 	// poll loop lives exactly as long as the session.
 	var opts []sshx.InteractiveOption
 	if r.o.TTY != nil {
-		bn := newBanner(r.cfg.Image, r.networkOpen(), inst.VM(), inst.VMPID, inst.Persist)
+		bn := newBanner(bannerOpts{
+			image: r.cfg.Image,
+			// The base name, not the path: it is the name the user calls the
+			// project by, and a path would swallow the row.
+			project: filepath.Base(r.projectDir),
+			warnNet: r.networkOpen(),
+			vmName:  inst.VM(),
+			vmPID:   inst.VMPID,
+			persist: inst.Persist,
+		})
 		pollCtx, stopPoll := context.WithCancel(ctx)
 		defer stopPoll()
 		go bn.poll(pollCtx, r.d, r.projectID)

@@ -28,18 +28,23 @@ func stripEscapes(t *testing.T, s string) string {
 }
 
 func renderedStats(image string, warn bool, st bannerStats) *banner {
-	b := newBanner(image, warn, "pt-test-instance", 0, false)
+	b := newBanner(bannerOpts{
+		image:   image,
+		project: "myproj",
+		warnNet: warn,
+		vmName:  "pt-test-instance",
+	})
 	b.stats = st
 	return b
 }
 
-func TestBannerRenderWideHasBothSides(t *testing.T) {
+func TestBannerRenderWideHasEverySegment(t *testing.T) {
 	b := renderedStats("pt-proj-abc123", true, bannerStats{shells: 2, cpuPct: 87.4, memGB: 2.35, haveUsage: true})
 	out := b.render(120)
 	plain := stripEscapes(t, out)
 
 	for _, want := range []string{
-		"🐢 Sandbox", "[pt-proj-abc123]", "⚠️ unrestricted network",
+		"🐢 Sandbox", "[pt-proj-abc123]", "· myproj", "⚠️ Unrestricted Egress",
 		"2 shells → 87% CPU / 2.4GB MEM",
 	} {
 		if !strings.Contains(plain, want) {
@@ -48,6 +53,39 @@ func TestBannerRenderWideHasBothSides(t *testing.T) {
 	}
 	if w := cellWidth(plain); w > 120 {
 		t.Errorf("row is %d cells, wider than the 120-cell terminal", w)
+	}
+}
+
+// The warning is the row's alarm: it belongs in the middle of the space
+// between the name and the figures, not tucked against either of them.
+// Single-cell runes throughout, so a byte index is also a column.
+func TestBannerLayoutCentersWarningBetweenSegments(t *testing.T) {
+	lit := func(s string) seg { return seg{plain: s, styled: s} }
+	left, warn, right := lit(strings.Repeat("l", 10)), lit(strings.Repeat("w", 4)), strings.Repeat("r", 6)
+
+	row, ok := layout(40, left, warn, right)
+	if !ok {
+		t.Fatal("layout refused a row with 24 cells of gap for a 4-cell warning")
+	}
+	plain := stripEscapes(t, row)
+	if got := strings.Index(plain, "w"); got != 20 {
+		t.Errorf("warning starts at column %d, want 20 (row %q)", got, plain)
+	}
+	if got := strings.Index(plain, "r"); got != 34 {
+		t.Errorf("figures start at column %d, want 34 (row %q)", got, plain)
+	}
+}
+
+// Its two neighbours can crowd it, but never touch it.
+func TestBannerLayoutRefusesAGapWithoutClearance(t *testing.T) {
+	lit := func(s string) seg { return seg{plain: s, styled: s} }
+	left, warn, right := lit(strings.Repeat("l", 10)), lit(strings.Repeat("w", 4)), strings.Repeat("r", 6)
+
+	if _, ok := layout(20, left, warn, right); ok {
+		t.Error("layout accepted a gap exactly the warning's width")
+	}
+	if _, ok := layout(22, left, warn, right); !ok {
+		t.Error("layout refused a gap with a cell of clearance on each side")
 	}
 }
 
@@ -70,8 +108,23 @@ func TestBannerRenderNarrowDropsRightSide(t *testing.T) {
 	if strings.Contains(plain, "CPU") {
 		t.Errorf("right side survived a 60-cell terminal: %q", plain)
 	}
-	if !strings.Contains(plain, "unrestricted network") {
-		t.Errorf("left side lost the warning before the figures: %q", plain)
+	if !strings.Contains(plain, "Unrestricted Egress") {
+		t.Errorf("row lost the warning before the figures: %q", plain)
+	}
+}
+
+// The project name is what a narrowing row gives up first: the warning and the
+// figures both outrank it, and the image name outlives it.
+func TestBannerRenderNarrowDropsProjectFirst(t *testing.T) {
+	b := renderedStats("tahoe-base", true, bannerStats{shells: 1})
+	plain := stripEscapes(t, b.render(60))
+	if strings.Contains(plain, "myproj") {
+		t.Errorf("project name survived a 60-cell terminal: %q", plain)
+	}
+	for _, want := range []string{"[tahoe-base]", "Unrestricted Egress", "1 shell"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("render missing %q in %q", want, plain)
+		}
 	}
 }
 
@@ -128,7 +181,7 @@ func TestTruncateTail(t *testing.T) {
 }
 
 func TestBannerRightTextForms(t *testing.T) {
-	b := newBanner("img", false, "pt-test-instance", 0, false)
+	b := newBanner(bannerOpts{image: "img", vmName: "pt-test-instance"})
 	cases := []struct {
 		st   bannerStats
 		want string
