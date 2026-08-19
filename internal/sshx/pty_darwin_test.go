@@ -6,8 +6,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -206,6 +208,124 @@ func TestInteractiveOnRealPTY(t *testing.T) {
 		t.Fatal("Interactive never returned")
 	}
 
+	if restored := termiosOf(t, slave); restored != original {
+		t.Fatalf("terminal not restored: got %+v, want %+v", restored, original)
+	}
+}
+
+// TestInteractiveStatusLine drives the reserved bottom row end to end on a
+// real terminal: the one-row height lie in the pty-req, the scroll region and
+// first paint, the re-anchoring resize, and the surrender of the row on exit.
+func TestInteractiveStatusLine(t *testing.T) {
+	master, slave := openPTY(t)
+	setWinsize(t, slave, 120, 40)
+	original := termiosOf(t, slave)
+
+	srv, c := dialTestServer(t)
+	ptys := make(chan ptyPayload, 4)
+	winches := make(chan windowChangePayload, 8)
+	srv.setSessionHooks(
+		func(p ptyPayload) bool { ptys <- p; return true },
+		func(p windowChangePayload) { winches <- p },
+	)
+
+	proceed := make(chan struct{})
+	srv.SetExecHandler(func(cmd string, stdin io.Reader, stdout, stderr io.Writer) int {
+		<-proceed
+		return 0
+	})
+
+	// Everything the local terminal is told, as one growing transcript.
+	var mu sync.Mutex
+	var seen bytes.Buffer
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := master.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				seen.Write(buf[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	waitFor := func(what, want string) {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			mu.Lock()
+			ok := bytes.Contains(seen.Bytes(), []byte(want))
+			mu.Unlock()
+			if ok {
+				return
+			}
+			if time.Now().After(deadline) {
+				mu.Lock()
+				t.Fatalf("%s: %q never reached the terminal; transcript %q", what, want, seen.String())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	status := &StatusLine{Render: func(w int) string { return fmt.Sprintf("STATUS:%d", w) }}
+	done := make(chan int, 1)
+	go func() {
+		code, err := c.Interactive(context.Background(), "exec $SHELL -l", slave, WithStatusLine(status))
+		if err != nil {
+			t.Errorf("Interactive: %v", err)
+		}
+		done <- code
+	}()
+
+	// The guest must believe the terminal is one row shorter; the reserved
+	// row is not survivable any other way.
+	select {
+	case p := <-ptys:
+		if p.Columns != 120 || p.Rows != 39 {
+			t.Errorf("pty size = %dx%d, want 120x39", p.Columns, p.Rows)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("no pty-req reached the guest")
+	}
+
+	waitFor("session start", "\x1b[1;39r")
+	waitFor("first paint", "STATUS:120")
+
+	setWinsize(t, slave, 100, 30)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGWINCH); err != nil {
+		t.Fatalf("raise SIGWINCH: %v", err)
+	}
+	deadline := time.After(30 * time.Second)
+	for {
+		var p windowChangePayload
+		select {
+		case p = <-winches:
+		case <-deadline:
+			t.Fatal("resize was never forwarded to the guest")
+		}
+		if p.Columns == 100 && p.Rows == 29 {
+			break
+		}
+	}
+	waitFor("re-anchored region", "\x1b[1;29r")
+	waitFor("repaint at new width", "STATUS:100")
+
+	close(proceed)
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0", code)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Interactive never returned")
+	}
+
+	// On the way out the row is surrendered: full region restored, banner row
+	// erased, termios back to the original.
+	waitFor("region surrender", "\x1b[r")
 	if restored := termiosOf(t, slave); restored != original {
 		t.Fatalf("terminal not restored: got %+v, want %+v", restored, original)
 	}

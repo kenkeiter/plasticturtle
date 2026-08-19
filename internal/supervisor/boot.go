@@ -83,6 +83,7 @@ func (r *run) boot(ctx, vmCtx context.Context) error {
 		return fmt.Errorf("run %s: %w", r.p.InstanceName, err)
 	}
 	r.booted = true
+	r.vmPID = proc.Pid()
 	r.watchChild(proc)
 	r.logf("started vm %s (pid %d)", r.p.InstanceName, proc.Pid())
 

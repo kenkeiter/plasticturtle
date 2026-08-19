@@ -112,7 +112,13 @@ type Instance struct {
 	SupervisorPID   int    `json:"supervisorPid"`
 	SupervisorStart uint64 `json:"supervisorStart"`
 
-	VMIP      string    `json:"vmIp,omitempty"`
+	VMIP string `json:"vmIp,omitempty"`
+
+	// VMPID is the host PID of the tart run child, published alongside
+	// StateRunning. The shell's status banner samples its CPU and memory; a
+	// zero value simply means "unknown" and the banner omits those figures.
+	VMPID int `json:"vmPid,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	Ports     []PortMap `json:"ports"`
 }

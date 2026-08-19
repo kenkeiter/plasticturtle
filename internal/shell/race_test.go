@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kenkeiter/plasticturtle/internal/ptcfg"
 )
 
 // hostileReader fails the test if anything reads from it.
@@ -78,6 +80,29 @@ ports:
 	var wg sync.WaitGroup
 	errs := make([]error, shells)
 
+	// Keep the fake clock moving while the shells race. The losing shell
+	// polls the instance record on clock ticks, and if it reads the record in
+	// the window between the winner's claim and its recordSupervisor stamp it
+	// sees no supervisor to give up on and waits for the next tick — which,
+	// on a frozen fake clock, never comes. In production the real clock
+	// always advances; without this the test deadlocks on exactly the timing
+	// it exists to exercise.
+	clockDone := make(chan struct{})
+	var clockWG sync.WaitGroup
+	clockWG.Add(1)
+	go func() {
+		defer clockWG.Done()
+		for {
+			select {
+			case <-clockDone:
+				return
+			default:
+				h.clk.Advance(ptcfg.CreatingPollInterval)
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+
 	for i := 0; i < shells; i++ {
 		prompts[i] = &hostileReader{t: t}
 		wg.Add(1)
@@ -89,6 +114,8 @@ ports:
 		}(i)
 	}
 	wg.Wait()
+	close(clockDone)
+	clockWG.Wait()
 
 	// The discriminator. With the claim before the negotiation, exactly one
 	// shell ever probes the host ports; with it after, every shell released by

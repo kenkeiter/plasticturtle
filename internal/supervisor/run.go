@@ -79,6 +79,7 @@ type run struct {
 	stopBeat func()
 
 	vmIP      string
+	vmPID     int
 	cloned    bool
 	booted    bool
 	published bool
@@ -222,6 +223,7 @@ func (r *run) publish() error {
 	return r.withInstance(func(inst *state.Instance) error {
 		inst.State = state.StateRunning
 		inst.VMIP = r.vmIP
+		inst.VMPID = r.vmPID
 		inst.Ports = portMaps(r.p.Ports)
 		return nil
 	})

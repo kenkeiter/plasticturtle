@@ -576,11 +576,31 @@ func (r *runner) session(ctx context.Context, inst *state.Instance) (int, error)
 	}
 	defer func() { _ = cl.Close() }()
 
-	code, err := cl.Interactive(ctx, sshx.LoginCommand(config.GuestProjectPath()), r.o.TTY)
+	// The status banner rides along whenever there is a terminal to put it
+	// on; sshx quietly declines it for terminals too small to split. Its
+	// poll loop lives exactly as long as the session.
+	var opts []sshx.InteractiveOption
+	if r.o.TTY != nil {
+		bn := newBanner(r.cfg.Image, r.networkOpen(), inst.InstanceName, inst.VMPID)
+		pollCtx, stopPoll := context.WithCancel(ctx)
+		defer stopPoll()
+		go bn.poll(pollCtx, r.d, r.projectID)
+		opts = append(opts, sshx.WithStatusLine(bn.line))
+	}
+
+	code, err := cl.Interactive(ctx, sshx.LoginCommand(config.GuestProjectPath()), r.o.TTY, opts...)
 	if err != nil {
 		return code, r.sessionFailure(err)
 	}
 	return code, nil
+}
+
+// networkOpen reports whether the guest's outbound network is unrestricted,
+// which the banner warns about. It reads the current config rather than the
+// instance's snapshot — the two differ only across a config drift, where the
+// current file is the one the user can act on.
+func (r *runner) networkOpen() bool {
+	return r.cfg.Network == nil || r.cfg.Network.Policy != config.NetRestricted
 }
 
 // sessionFailure explains a transport failure in terms of the VM rather than

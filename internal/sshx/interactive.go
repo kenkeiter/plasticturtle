@@ -27,6 +27,21 @@ var fallbackModes = ssh.TerminalModes{
 	ssh.TTY_OP_OSPEED: 14400,
 }
 
+// InteractiveOption configures one Interactive session.
+type InteractiveOption func(*interactiveOpts)
+
+type interactiveOpts struct {
+	status *StatusLine
+}
+
+// WithStatusLine reserves the terminal's bottom row for status, for as long
+// as the session lasts. It requires a real terminal at least three rows tall;
+// anything less and the option is silently ignored — a session without a
+// banner beats no session.
+func WithStatusLine(status *StatusLine) InteractiveOption {
+	return func(o *interactiveOpts) { o.status = status }
+}
+
 // Interactive runs command on the guest with a PTY attached to tty, mirroring
 // its size, its terminal settings and — after negotiating one the guest can
 // resolve — its TERM, forwarding SIGWINCH on resize, and putting the local
@@ -35,7 +50,11 @@ var fallbackModes = ssh.TerminalModes{
 // It returns the remote command's exit status, which pt shell exits with. Raw
 // mode is always restored, including on panic: leaving a user's terminal in
 // raw mode is the worst failure this tool can produce.
-func (c *Client) Interactive(ctx context.Context, command string, tty *os.File) (exitCode int, err error) {
+func (c *Client) Interactive(ctx context.Context, command string, tty *os.File, opts ...InteractiveOption) (exitCode int, err error) {
+	var cfg interactiveOpts
+	for _, o := range opts {
+		o(&cfg)
+	}
 	sess, err := c.conn.NewSession()
 	if err != nil {
 		return transportExitCode, fmt.Errorf("ssh session: %w", err)
@@ -46,6 +65,10 @@ func (c *Client) Interactive(ctx context.Context, command string, tty *os.File) 
 	// is a pipe would give the guest a terminal it can't size and merge stderr
 	// into stdout for a caller that is parsing it.
 	isTTY := tty != nil && term.IsTerminal(int(tty.Fd()))
+
+	// bar is non-nil only when a status line is both requested and possible;
+	// every piece of special handling below keys off it.
+	var bar *statusBar
 
 	if isTTY {
 		fd := int(tty.Fd())
@@ -73,18 +96,44 @@ func (c *Client) Interactive(ctx context.Context, command string, tty *os.File) 
 		if sizeErr != nil || width <= 0 || height <= 0 {
 			width, height = 80, 24
 		}
-		if err := sess.RequestPty(termName, height, width, modes); err != nil {
+
+		// The status line claims the bottom row, so the guest is told the
+		// terminal is one row shorter. Below three rows there is no useful
+		// split, so the option is dropped rather than fought for.
+		guestHeight := height
+		if cfg.status != nil && cfg.status.Render != nil && height >= 3 {
+			bar = &statusBar{out: tty, render: cfg.status.Render, width: width, height: height}
+			guestHeight = bar.guestHeight()
+		}
+
+		if err := sess.RequestPty(termName, guestHeight, width, modes); err != nil {
 			return transportExitCode, fmt.Errorf("request pty: %w", err)
 		}
 
-		stopWinch := forwardResizes(sess, fd)
+		if bar != nil {
+			// Deferred while raw mode's own restore is already pending, so on
+			// the way out stop runs first (LIFO), while the sequences it
+			// emits still mean what they say.
+			bar.start()
+			cfg.status.attach(bar)
+			defer func() {
+				cfg.status.detach()
+				bar.stop()
+			}()
+		}
+
+		stopWinch := forwardResizes(sess, fd, bar)
 		defer stopWinch()
 	}
 
 	if tty != nil {
 		// With a PTY the guest merges stderr into the same stream anyway;
 		// pointing both at the terminal keeps the non-PTY case ordered too.
-		sess.Stdout, sess.Stderr = tty, tty
+		var out io.Writer = tty
+		if bar != nil {
+			out = &vtFilter{bar: bar}
+		}
+		sess.Stdout, sess.Stderr = out, out
 	} else {
 		sess.Stdout, sess.Stderr = os.Stdout, os.Stderr
 	}
@@ -188,7 +237,11 @@ var signalNumbers = map[ssh.Signal]syscall.Signal{
 // returned stop function is called. Without it, a window resized mid-session
 // leaves the guest's shell drawing to the old geometry for the rest of the
 // session — there is no other way for it to learn.
-func forwardResizes(sess *ssh.Session, fd int) (stop func()) {
+//
+// With a status bar, the bar re-anchors first and the guest is told the
+// reduced height; the other order would have the guest paint into a row the
+// bar still thought it owned.
+func forwardResizes(sess *ssh.Session, fd int, bar *statusBar) (stop func()) {
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
 	done := make(chan struct{})
@@ -200,6 +253,9 @@ func forwardResizes(sess *ssh.Session, fd int) (stop func()) {
 				width, height, err := term.GetSize(fd)
 				if err != nil {
 					continue
+				}
+				if bar != nil {
+					height = bar.resize(width, height)
 				}
 				// A failed window-change means the session is going away; the
 				// Wait in Interactive will report it.

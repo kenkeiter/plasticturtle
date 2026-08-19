@@ -69,6 +69,12 @@ const (
 	// before a re-entering `pt shell` creates a fresh one.
 	StoppingWaitTimeout = 45 * time.Second
 
+	// BannerRefreshInterval is how often the shell's status banner re-reads
+	// the session count and samples the VM's CPU and memory. Every attached
+	// shell runs this loop, so it must stay cheap: one shared-lock directory
+	// read and one ps invocation per tick.
+	BannerRefreshInterval = 2 * time.Second
+
 	// GuestProbeTimeout bounds the small setup commands pt runs inside the
 	// guest between "the VM is up" and "the user has a prompt" — currently the
 	// terminfo negotiation that decides what TERM the session requests.
