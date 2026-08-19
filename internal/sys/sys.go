@@ -39,6 +39,12 @@ type Runner interface {
 
 	// Start launches name with args and returns immediately.
 	Start(ctx context.Context, name string, args ...string) (Process, error)
+
+	// StartEnv is Start with extra environment entries ("KEY=value") layered
+	// over the current process environment for the child. A later entry wins
+	// over an earlier one and over an inherited variable of the same name, so a
+	// caller can override PATH by including "PATH=..." here.
+	StartEnv(ctx context.Context, name string, env []string, args ...string) (Process, error)
 }
 
 // Process is a running child started by Runner.Start.

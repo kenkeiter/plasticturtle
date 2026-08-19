@@ -173,8 +173,13 @@ func TestLoadStrictDecoding(t *testing.T) {
 	}{
 		{
 			name: "unknown top-level key",
-			body: "version: 1\nimage: img\nnetwork: bridged\n",
-			want: "network",
+			body: "version: 1\nimage: img\nfirewall: bridged\n",
+			want: "firewall",
+		},
+		{
+			name: "unknown nested key under network",
+			body: "version: 1\nimage: img\nnetwork:\n  policy: restricted\n  allowlist: [github.com]\n",
+			want: "allowlist",
 		},
 		{
 			name: "unknown nested key under resources",

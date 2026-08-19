@@ -62,6 +62,34 @@ type Config struct {
 	Resources *Resources `yaml:"resources,omitempty"`
 	Ports     []Port     `yaml:"ports,omitempty"`
 	Mounts    []Mount    `yaml:"mounts,omitempty"`
+	Network   *Network   `yaml:"network,omitempty"`
+}
+
+// NetPolicy is the guest's outbound network posture.
+type NetPolicy string
+
+const (
+	// NetOpen is the historical behavior: the guest has unrestricted outbound
+	// access. It is the default when the network block is absent, so that
+	// adding this feature changes no existing project's behavior.
+	NetOpen NetPolicy = "open"
+
+	// NetRestricted default-denies guest egress and permits only connections to
+	// hosts whose names match Network.Allow. Enforcement is host-side (the
+	// softnet shim); see internal/netfw.
+	NetRestricted NetPolicy = "restricted"
+)
+
+// Network is the outbound firewall policy. A nil *Network on Config means
+// NetOpen with no allowlist — the distinction between "absent" and "present but
+// empty" is why this is a pointer, exactly as with Resources.
+type Network struct {
+	Policy NetPolicy `yaml:"policy"`
+	// Allow is a list of domain patterns. Each is either an exact domain
+	// (github.com) or a single wildcard label prefix (*.githubusercontent.com,
+	// which matches any direct-or-deeper subdomain but not the bare parent).
+	// Meaningful only under NetRestricted.
+	Allow []string `yaml:"allow,omitempty"`
 }
 
 // Resources overrides the CPU/memory inherited from the image. A zero field
@@ -101,6 +129,7 @@ type Resolved struct {
 	Memory      int // MiB; 0 = inherit from image
 	Mounts      []ResolvedMount
 	Ports       []ResolvedPort
+	Network     ResolvedNetwork
 }
 
 // ResolvedMount is a mount with an absolute, existing host path.
@@ -114,6 +143,14 @@ type ResolvedMount struct {
 type ResolvedPort struct {
 	VMPort   int
 	HostPort int
+}
+
+// ResolvedNetwork is the network policy after defaults: Policy is always one of
+// the two constants (never ""), and Allow is normalized to lowercase with
+// duplicates removed. Under NetOpen, Allow is always nil.
+type ResolvedNetwork struct {
+	Policy NetPolicy
+	Allow  []string
 }
 
 // minCPU and minMemoryMiB are the floors from spec §3.1. A VM below either is
@@ -131,6 +168,15 @@ const maxPort = 65535
 // labels and guest path components, so anything with a separator, a space, or
 // a shell metacharacter has to be rejected here rather than escaped later.
 var mountNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// domainLabelRe is one DNS label: 1–63 chars, alphanumeric with internal
+// hyphens. It is deliberately stricter than the wire format (no leading digit
+// rule is enforced, but underscores and other oddities are rejected) because
+// these strings become firewall match rules, and a permissive grammar here is
+// a permissive firewall. maxDomainLen caps the whole pattern per RFC 1035.
+var domainLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+const maxDomainLen = 253
 
 // Find walks upward from startDir looking for FileName, stopping at the
 // filesystem root. It returns the canonical absolute path of the directory
@@ -242,8 +288,98 @@ func (c *Config) Validate() error {
 	}
 	errs = append(errs, validatePorts(c.Ports)...)
 	errs = append(errs, validateMounts(c.Mounts)...)
+	errs = append(errs, validateNetwork(c.Network)...)
 
 	return errors.Join(errs...)
+}
+
+// validateNetwork checks the policy value and the domain grammar of every allow
+// entry. An allow list under the open policy is a likely mistake — the user
+// wrote rules that will not be enforced — so it is rejected rather than silently
+// ignored, in keeping with this file's "a typo is an error" stance.
+func validateNetwork(n *Network) []error {
+	if n == nil {
+		return nil
+	}
+	var errs []error
+	switch n.Policy {
+	case NetOpen:
+		if len(n.Allow) > 0 {
+			errs = append(errs, fmt.Errorf("network.allow: not permitted under policy %q; the list would never be enforced (use policy %q)", NetOpen, NetRestricted))
+		}
+	case NetRestricted:
+		// An empty allowlist under restricted is legal: it denies all egress,
+		// which is a coherent (if strict) thing to ask for.
+	case "":
+		errs = append(errs, fmt.Errorf("network.policy: required when a network block is present; must be %q or %q", NetOpen, NetRestricted))
+	default:
+		errs = append(errs, fmt.Errorf("network.policy: must be %q or %q, got %q", NetOpen, NetRestricted, n.Policy))
+	}
+	seen := make(map[string]int, len(n.Allow))
+	for i, pat := range n.Allow {
+		norm, err := normalizeDomainPattern(pat)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("network.allow[%d]: %w", i, err))
+			continue
+		}
+		if first, dup := seen[norm]; dup {
+			errs = append(errs, fmt.Errorf("network.allow[%d]: %q duplicates network.allow[%d]", i, pat, first))
+			continue
+		}
+		seen[norm] = i
+	}
+	return errs
+}
+
+// normalizeDomainPattern validates one allow entry and returns its canonical
+// (lowercased, trailing-dot-stripped) form. The accepted shapes are an exact
+// domain and a single leading "*." wildcard; anything with a scheme, port,
+// path, IP literal, or interior wildcard is rejected here so the firewall never
+// has to interpret an ambiguous rule.
+func normalizeDomainPattern(pat string) (string, error) {
+	p := strings.ToLower(strings.TrimSpace(pat))
+	if p == "" {
+		return "", errors.New("empty domain")
+	}
+	// A trailing dot (fully-qualified form) is accepted and normalized away so
+	// "github.com." and "github.com" are the same rule.
+	p = strings.TrimSuffix(p, ".")
+	if p == "" {
+		return "", errors.New("empty domain")
+	}
+	if strings.ContainsAny(p, "/:@ ") {
+		return "", fmt.Errorf("%q: must be a bare domain, not a URL, host:port, or path", pat)
+	}
+	if len(p) > maxDomainLen {
+		return "", fmt.Errorf("%q: domain is longer than %d characters", pat, maxDomainLen)
+	}
+	labels := strings.Split(p, ".")
+	// A wildcard is permitted only as the entire first label. "*.example.com"
+	// needs at least the star plus one real label to mean anything.
+	if labels[0] == "*" {
+		if len(labels) < 2 {
+			return "", fmt.Errorf("%q: wildcard must have a parent domain, e.g. *.example.com", pat)
+		}
+		labels = labels[1:]
+		p = "*." + strings.Join(labels, ".")
+	} else if strings.Contains(p, "*") {
+		return "", fmt.Errorf("%q: wildcard is only allowed as a leading label (*.example.com)", pat)
+	}
+	if len(labels) < 2 {
+		return "", fmt.Errorf("%q: not a fully-qualified domain (needs at least one dot)", pat)
+	}
+	for _, l := range labels {
+		if !domainLabelRe.MatchString(l) {
+			return "", fmt.Errorf("%q: %q is not a valid DNS label", pat, l)
+		}
+	}
+	// An all-numeric last label means this is an IPv4 literal, not a domain.
+	// The firewall pins names to addresses; an address given as a "domain"
+	// would never match a DNS answer, so reject it as a likely mistake.
+	if tld := labels[len(labels)-1]; strings.IndexFunc(tld, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
+		return "", fmt.Errorf("%q: looks like an IP address, not a domain", pat)
+	}
+	return p, nil
 }
 
 // validatePorts checks each forward and then the set as a whole. The duplicate
@@ -330,6 +466,7 @@ func (c *Config) Resolve(projectDir string) (*Resolved, error) {
 	if c.Resources != nil {
 		res.CPU, res.Memory = c.Resources.CPU, c.Resources.Memory
 	}
+	res.Network = resolveNetwork(c.Network)
 
 	for _, p := range c.Ports {
 		host := p.HostPort
@@ -381,6 +518,30 @@ func (c *Config) Resolve(projectDir string) (*Resolved, error) {
 		return nil, err
 	}
 	return res, nil
+}
+
+// resolveNetwork applies the policy default and normalizes the allowlist. It
+// assumes Validate has passed, so normalizeDomainPattern cannot fail here; a
+// pattern that somehow does not normalize is dropped rather than propagated,
+// because a malformed rule must never widen the firewall.
+func resolveNetwork(n *Network) ResolvedNetwork {
+	if n == nil || n.Policy == NetOpen {
+		return ResolvedNetwork{Policy: NetOpen}
+	}
+	out := ResolvedNetwork{Policy: n.Policy}
+	seen := make(map[string]struct{}, len(n.Allow))
+	for _, pat := range n.Allow {
+		norm, err := normalizeDomainPattern(pat)
+		if err != nil {
+			continue
+		}
+		if _, dup := seen[norm]; dup {
+			continue
+		}
+		seen[norm] = struct{}{}
+		out.Allow = append(out.Allow, norm)
+	}
+	return out
 }
 
 // expandHostPath turns a config-authored path into an absolute one: ~ is the
@@ -503,6 +664,30 @@ func Template(c *Config, generatedAt time.Time) ([]byte, error) {
 		b.WriteString("#  - name: datasets\n")
 		b.WriteString("#    host_path: ~/datasets\n")
 		b.WriteString("#    mode: ro\n")
+	}
+
+	b.WriteString("\n# Optional. Outbound network firewall. Default is 'open': the guest reaches\n")
+	b.WriteString("# the whole internet (and your LAN). Under 'restricted', egress is\n")
+	b.WriteString("# default-DENY and only connections to the domains below are allowed —\n")
+	b.WriteString("# tools that ignore the policy simply get no connectivity (fail closed).\n")
+	b.WriteString("# A leading *. matches any subdomain. Enforcement is host-side and needs\n")
+	b.WriteString("# the softnet shim installed once; run `pt doctor` if a boot complains.\n")
+	if n := check.Network; n != nil && n.Policy != "" {
+		b.WriteString("network:\n")
+		b.WriteString("  policy: " + yamlScalar(string(n.Policy)) + "\n")
+		if len(n.Allow) > 0 {
+			b.WriteString("  allow:\n")
+			for _, d := range n.Allow {
+				b.WriteString("    - " + yamlScalar(d) + "\n")
+			}
+		}
+	} else {
+		b.WriteString("#network:\n")
+		b.WriteString("#  policy: restricted       # open (default) | restricted\n")
+		b.WriteString("#  allow:\n")
+		b.WriteString("#    - github.com\n")
+		b.WriteString("#    - \"*.githubusercontent.com\"\n")
+		b.WriteString("#    - registry.npmjs.org\n")
 	}
 	return []byte(b.String()), nil
 }

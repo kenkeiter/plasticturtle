@@ -43,12 +43,21 @@ func (realRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return stdout.Bytes(), nil
 }
 
-func (realRunner) Start(ctx context.Context, name string, args ...string) (Process, error) {
+func (r realRunner) Start(ctx context.Context, name string, args ...string) (Process, error) {
+	return r.StartEnv(ctx, name, nil, args...)
+}
+
+func (realRunner) StartEnv(ctx context.Context, name string, env []string, args ...string) (Process, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	// A long-lived child's output is the supervisor's log; callers redirect by
 	// setting their own process stdio before Start is reached.
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if len(env) > 0 {
+		// os/exec uses the last value for a repeated key, so appending lets a
+		// caller-supplied PATH or PT_* override the inherited environment.
+		cmd.Env = append(os.Environ(), env...)
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start %s: %w", name, err)
 	}

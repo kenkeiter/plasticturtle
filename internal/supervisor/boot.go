@@ -67,11 +67,17 @@ func (r *run) boot(ctx, vmCtx context.Context) error {
 		r.logf("resources: cpu=%d memory=%d MiB (zero means inherit)", r.p.Config.CPU, r.p.Config.Memory)
 	}
 
+	softnet, netEnv, err := r.networkRunOpts()
+	if err != nil {
+		return err
+	}
 	proc, err := r.d.Tart.Run(vmCtx, r.p.InstanceName, tart.RunOpts{
 		// Item 12 of the implementation plan: honored, not forced by the
 		// wrapper. Omitting it opens a UI window for every VM pt boots.
 		NoGraphics: true,
 		Dirs:       dirShares(r.p.Config.Mounts),
+		Softnet:    softnet,
+		Env:        netEnv,
 	})
 	if err != nil {
 		return fmt.Errorf("run %s: %w", r.p.InstanceName, err)
@@ -86,6 +92,10 @@ func (r *run) boot(ctx, vmCtx context.Context) error {
 	}
 	r.vmIP = ip
 	r.logf("guest address is %s", ip)
+
+	if err := r.checkVMNetCollision(); err != nil {
+		return err
+	}
 
 	addr := net.JoinHostPort(ip, strconv.Itoa(sshPort))
 	if err := r.waitForSSHD(bootCtx, addr); err != nil {

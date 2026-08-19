@@ -156,6 +156,9 @@ var ErrNoScript = errors.New("sys: no scripted response for command")
 type Call struct {
 	Name string
 	Args []string
+	// Env holds the extra environment entries passed to StartEnv, if any. It is
+	// nil for Run and plain Start.
+	Env []string
 }
 
 // String renders a call as the argv a test would script.
@@ -221,9 +224,13 @@ func (r *FakeRunner) Run(ctx context.Context, name string, args ...string) ([]by
 }
 
 func (r *FakeRunner) Start(ctx context.Context, name string, args ...string) (Process, error) {
+	return r.StartEnv(ctx, name, nil, args...)
+}
+
+func (r *FakeRunner) StartEnv(ctx context.Context, name string, env []string, args ...string) (Process, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := Call{Name: name, Args: args}
+	c := Call{Name: name, Args: args, Env: env}
 	r.calls = append(r.calls, c)
 	if resp, ok := r.scripts[c.String()]; ok && resp.err != nil {
 		return nil, resp.err

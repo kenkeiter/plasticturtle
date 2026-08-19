@@ -62,6 +62,7 @@ const (
 	sessionsDirName  = "sessions"
 	heartbeatName    = "heartbeat"
 	logFileName      = "supervisor.log"
+	firewallDirName  = "firewall"
 )
 
 // State files can name project paths and forwarded ports, so the tree is
@@ -253,6 +254,17 @@ func (s *Store) HeartbeatPath(projectID string) string {
 func (s *Store) LogPath(projectID string) string {
 	return filepath.Join(s.ProjectDir(projectID), logFileName)
 }
+
+// FirewallDir is the directory prepended to tart's PATH under a restricted
+// network policy. It holds a single executable named "softnet" — pt's firewall
+// shim — so that tart resolves the shim instead of the real softnet. It lives
+// outside the per-project instance tree because the shim is installed once and
+// shared by every project.
+func (s *Store) FirewallDir() string { return filepath.Join(s.Root, firewallDirName) }
+
+// ShimPath is the installed firewall shim, named "softnet" so tart finds it by
+// that name on PATH.
+func (s *Store) ShimPath() string { return filepath.Join(s.FirewallDir(), "softnet") }
 
 func (s *Store) sessionPath(projectID, sessionID string) string {
 	return filepath.Join(s.SessionsDir(projectID), safeComponent(sessionID)+".json")

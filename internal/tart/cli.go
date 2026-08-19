@@ -59,6 +59,9 @@ func (c *cli) Run(ctx context.Context, name string, opts RunOpts) (sys.Process, 
 	if opts.NoGraphics {
 		args = append(args, "--no-graphics")
 	}
+	if opts.Softnet {
+		args = append(args, "--net-softnet")
+	}
 	for _, d := range opts.Dirs {
 		args = append(args, "--dir="+dirSpec(d))
 	}
@@ -66,7 +69,7 @@ func (c *cli) Run(ctx context.Context, name string, opts RunOpts) (sys.Process, 
 
 	// Start, not Run: `tart run` is the VM's lifetime. The handle is the only
 	// way the supervisor learns that the guest died on its own.
-	p, err := c.r.Start(ctx, c.bin, args...)
+	p, err := c.r.StartEnv(ctx, c.bin, opts.Env, args...)
 	if err != nil {
 		return nil, mapErr(name, err)
 	}

@@ -1,5 +1,6 @@
 GO ?= go
 BIN := bin/pt
+SHIM := bin/pt-softnet-shim
 
 # Stamped into the binary so `pt --version` reports something traceable rather
 # than the literal string "dev".
@@ -23,8 +24,17 @@ vet:
 	$(GO) vet ./...
 
 .PHONY: build
-build:
+build: $(BIN) $(SHIM)
+
+# pt and its firewall shim are built together and live side by side: `pt
+# setup-firewall` installs the shim it finds next to itself.
+.PHONY: $(BIN)
+$(BIN):
 	$(GO) build $(LDFLAGS) -o $(BIN) ./cmd/pt
+
+.PHONY: $(SHIM)
+$(SHIM):
+	$(GO) build $(LDFLAGS) -o $(SHIM) ./cmd/pt-softnet-shim
 
 .PHONY: test
 test:

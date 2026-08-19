@@ -65,6 +65,17 @@ type RunOpts struct {
 	// explicit at the call site rather than buried in the wrapper.
 	NoGraphics bool
 	Dirs       []DirShare
+
+	// Softnet requests software networking (tart --net-softnet). pt sets it for
+	// a restricted network policy so that tart spawns the softnet binary — which
+	// pt shadows with its firewall shim via Env's PATH.
+	Softnet bool
+
+	// Env carries extra environment entries ("KEY=value") for the tart child,
+	// which tart passes on to softnet. pt uses it to put the shim ahead of the
+	// real softnet on PATH and to name the policy file. A later entry overrides
+	// an earlier one and any inherited variable.
+	Env []string
 }
 
 // Client is the tart surface pt uses. Every method takes a context so boot

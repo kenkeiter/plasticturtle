@@ -31,9 +31,11 @@ What you do not get:
   running in the VM can rewrite your repo, including `.plasticturtle` itself and
   any git hooks, `Makefile`, or CI config in it. Set `mode: ro` on the reserved
   `project` mount if you do not want that. _Note_: If `.plasticturtle` _is_ modified, you must approve changes using `pt allow` before Plastic Turtle will allow futher interaction.
-- **The guest has unrestricted outbound network access.** `pt` does not firewall
-  it. An agent in the VM can reach the internet, your LAN, and any service
-  listening on your host's LAN address.
+- **The guest has unrestricted outbound network access _by default_.** An agent
+  in the VM can reach the internet, your LAN, and any service listening on your
+  host's LAN address. A project can opt into a domain allowlist with a
+  `network:` policy — see [Network firewall](#network-firewall) — which changes
+  this to default-deny.
 - No defense against a VM escape, and no hardening of the guest image beyond
   what the image ships with.
 - Guest SSH host keys are not verified (see [Security notes](#security-notes)).
@@ -56,9 +58,13 @@ directory share is not auto-mounted; see [Linux guests](#linux-guests).
 ```sh
 git clone https://github.com/kenkeiter/plasticturtle
 cd plasticturtle
-make build            # -> ./bin/pt
-cp bin/pt /usr/local/bin/pt
+make build            # -> ./bin/pt and ./bin/pt-softnet-shim
+cp bin/pt bin/pt-softnet-shim /usr/local/bin/
 ```
+
+`pt-softnet-shim` is only needed for the [network firewall](#network-firewall);
+keep it next to `pt` (`pt setup-firewall` looks for it there). If you do not use
+`restricted` network policies you can skip it.
 
 Pull the tested image once (first `pt shell` would otherwise pull it inline,
 inside the 120 s boot timeout):
@@ -168,6 +174,8 @@ mounts:
 | `mounts[].name` | string | yes | — | `[a-zA-Z0-9_-]+`, unique within the file |
 | `mounts[].host_path` | string | see rules | — | required for every mount **except** `project`, where it is **forbidden** |
 | `mounts[].mode` | `rw` \| `ro` | no | `rw` | any other value is an error |
+| `network.policy` | `open` \| `restricted` | required if `network` present | `open` (when block absent) | any other value is an error |
+| `network.allow[]` | string | no | — | bare domain or `*.domain`; no scheme, port, path, or IP; forbidden under `open` |
 
 Additional rules:
 
@@ -418,6 +426,72 @@ The negotiation is done by `pt shell`, not the supervisor, because the superviso
 is detached and has nothing to prompt on. The shell holds each probe listener
 until the instant before it spawns the supervisor, which then re-binds; that gap
 is a race, and the supervisor retries once if it loses.
+
+## Network firewall
+
+By default the guest reaches anything. A project can restrict outbound traffic to
+a named set of domains by adding a `network:` block to `.plasticturtle`:
+
+```yaml
+network:
+  policy: restricted        # open (default) | restricted
+  allow:
+    - github.com            # exact host
+    - "*.githubusercontent.com"   # any subdomain (not the bare parent)
+    - registry.npmjs.org
+```
+
+Under `restricted`, egress is **default-deny**: a connection is allowed only to
+an address the guest learned by resolving a name on the allowlist. Everything
+else — a hardcoded IP, an out-of-band resolver, IPv6, a domain not listed — is
+dropped. Disallowed names resolve to `NXDOMAIN`, so tools fail fast and legibly
+instead of hanging. Nothing in the guest needs configuring: `curl`, `git`,
+package managers, and any other TCP client work transparently for allowed
+domains and simply cannot connect for the rest.
+
+### One-time setup
+
+Enforcement runs on the host, in a small shim that wraps
+[Softnet](https://github.com/cirruslabs/softnet) (Tart's software-networking
+layer). Install it once:
+
+```sh
+pt setup-firewall     # copies the shim into place; sudo makes it setuid-root
+```
+
+This is required only for `restricted` projects; `open` projects are untouched
+and need no setup. Re-run it after upgrading pt. A project whose policy is
+`restricted` **refuses to boot** if the shim is missing or misconfigured — the
+firewall fails closed rather than silently letting traffic through.
+
+### How it works
+
+Tart resolves the `softnet` binary from its `PATH`; for a restricted project, pt
+puts its shim there first. The shim spawns the real Softnet as a child and relays
+the guest's ethernet frames between them, enforcing the policy by **DNS-pinning**:
+it watches DNS answers for allowed names, records the returned IPs in a
+short-lived (TTL-bounded) allow-set, and drops any guest frame whose destination
+is not pinned. Root is used only to launch the child; the long-lived relay then
+drops back to your user.
+
+### What it does and does not stop
+
+- **Covers all TCP (and UDP) to allowed domains**, not just HTTP — because it
+  gates on the destination IP, not on parsing application traffic. There is no
+  proxy to configure and no TLS interception.
+- **IPv6 and QUIC to arbitrary hosts are blocked**; clients fall back to IPv4/TCP
+  for allowed domains.
+- **Shared CDN IPs are coarse.** An allowed and a disallowed domain served from
+  the same IP are indistinguishable once pinned; the allow-set is by address.
+- **DNS itself is a residual channel.** The guest can still send queries to the
+  gateway resolver (that is how resolution works at all), so a determined agent
+  can exfiltrate small amounts of data by encoding it in DNS lookups. The
+  firewall restricts where the guest can *connect*, not what it can *ask to
+  resolve*.
+- **Subnet collisions.** Software networking assigns the sandbox a private
+  subnet; if it lands on the same range as your LAN, host connectivity breaks.
+  pt detects this after boot and refuses with an explanation rather than leaving
+  you with mysteriously broken networking.
 
 ## The guest filesystem
 

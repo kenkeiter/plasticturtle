@@ -52,6 +52,7 @@ func newRootCmd() *cobra.Command {
 		newShellCmd(),
 		newPortsCmd(),
 		newListCmd(),
+		newSetupFirewallCmd(),
 		newSuperviseCmd(),
 		newCheckTrustCmd(),
 		newZSHHookCmd(),
@@ -182,6 +183,27 @@ func newListCmd() *cobra.Command {
 			return runList(e, cmd.OutOrStdout(), global.JSON)
 		},
 	}
+}
+
+func newSetupFirewallCmd() *cobra.Command {
+	var shim string
+	cmd := &cobra.Command{
+		Use:   "setup-firewall",
+		Short: "Install the domain-firewall shim (one-time, needs sudo)",
+		Long: "Installs pt's software-networking shim and makes it setuid-root so that\n" +
+			"projects with a restricted `network:` policy can enforce their domain\n" +
+			"allowlist. This is a one-time setup; re-run it after upgrading pt.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			e, err := openEnv()
+			if err != nil {
+				return err
+			}
+			return runSetupFirewall(e.Store, shim, cmd.OutOrStdout(), sudoRunner)
+		},
+	}
+	cmd.Flags().StringVar(&shim, "shim", "", "path to the pt-softnet-shim binary (default: next to pt)")
+	return cmd
 }
 
 // Hidden subcommands. These are implementation details of pt itself; users
