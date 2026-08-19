@@ -69,6 +69,31 @@ func tcpFrame(smac, dmac [6]byte, sip, dip netip.Addr, sport, dport uint16) []by
 	return ethIPv4(smac, dmac, ipv4Hdr(protoTCP, sip, dip, tcpSYN(sport, dport)))
 }
 
+// tcpAckFrame is like tcpFrame but with the ACK flag set — reply traffic of an
+// established connection rather than a new one.
+func tcpAckFrame(smac, dmac [6]byte, sip, dip netip.Addr, sport, dport uint16) []byte {
+	tcp := tcpSYN(sport, dport)
+	tcp[13] = 0x10 // ACK
+	return ethIPv4(smac, dmac, ipv4Hdr(protoTCP, sip, dip, tcp))
+}
+
+// dhcpAckPayload packs a minimal DHCPACK naming router/DNS/server-identifier
+// options, the wire shape vmnet's bootpd hands a guest.
+func dhcpAckPayload(router, dns, serverID netip.Addr) []byte {
+	p := make([]byte, bootpOptionsOff)
+	p[0] = bootpReply
+	p = append(p, dhcpMagicCookie[:]...)
+	p = append(p, 53, 1, 5) // message type: ACK
+	r4, d4, s4 := router.As4(), dns.As4(), serverID.As4()
+	p = append(p, 3, 4)
+	p = append(p, r4[:]...)
+	p = append(p, 6, 4)
+	p = append(p, d4[:]...)
+	p = append(p, 54, 4)
+	p = append(p, s4[:]...)
+	return append(p, 255)
+}
+
 // dnsQuery packs an A-record query for name.
 func dnsQuery(t *testing.T, id uint16, name string) []byte {
 	t.Helper()

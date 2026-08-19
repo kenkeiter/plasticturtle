@@ -1,31 +1,41 @@
-// Command pt-softnet-shim is Plastic Turtle's domain firewall, packaged as a
-// drop-in replacement for the `softnet` binary that Tart spawns.
+// Command pt-softnet-shim is Plastic Turtle's domain firewall and the sandbox's
+// entire software-networking layer, packaged as a drop-in replacement for the
+// `softnet` binary that Tart spawns.
 //
 // Tart resolves "softnet" from its PATH and hands the new process the guest's
 // virtual network link as stdin (a SOCK_DGRAM socketpair, one datagram per
-// ethernet frame). pt puts this shim ahead of the real softnet on that PATH.
-// The shim spawns the real softnet as a child on a second socketpair, then
-// relays frames between the two — applying an internal/netfw filter that enforces
-// the project's domain allowlist by DNS-pinning. With no policy (or an "open"
-// one) it relays untouched, so it is safe to sit in the path unconditionally.
+// ethernet frame). pt puts this shim ahead of anything else on that PATH. The
+// shim creates the guest's NAT network itself through vmnet.framework
+// (internal/vmnetlink) and relays frames between that interface and stdin —
+// applying an internal/netfw filter that enforces the project's domain allowlist
+// by DNS-pinning. With no policy (or an "open" one) it relays untouched, so it
+// is safe to sit in the path unconditionally. There is no external softnet.
 //
-// Privilege: Tart requires softnet to be reachable as root, so this binary is
-// installed setuid-root. Root is used for exactly one thing — spawning the real
-// softnet, which needs it for vmnet — after which the long-lived relay drops
-// back to the invoking user. The real softnet path is resolved only from trusted
-// root-owned locations when privileged, never from the environment.
+// Privilege: creating a vmnet interface requires root, so this binary is
+// installed setuid-root. Root is used for exactly one thing — vmnetlink.Open —
+// after which the interface belongs to the process rather than to the uid, and
+// the long-lived relay drops back to the invoking user. Nothing
+// user-controllable (the policy file, guest frames) is read while privileged.
 package main
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
-	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/kenkeiter/plasticturtle/internal/netfw"
+	"github.com/kenkeiter/plasticturtle/internal/vmnetlink"
 )
+
+// defaultSubnet is used when PT_NETFW_SUBNET is unset, which only happens on a
+// direct invocation: pt always pins the subnet it picked. It is the top of the
+// range pt scans, so a manual run lands where a pt-launched sandbox would.
+const defaultSubnet = "192.168.252.0/24"
 
 func main() {
 	lg := newLogger(os.Getenv("PT_SHIM_LOG"))
@@ -39,52 +49,46 @@ func main() {
 }
 
 func run(lg *logger) error {
-	privileged := isPrivileged()
-
-	realPath, err := resolveRealSoftnet(privileged, os.Getenv, os.Stat)
+	// argv carries no privilege of its own, so parsing it first costs nothing and
+	// makes a malformed guest MAC fail before we ask vmnet for an interface.
+	guestMAC, err := parseVMMAC(os.Args[1:])
 	if err != nil {
 		return err
 	}
-	lg.printf("real softnet: %s", realPath)
 
-	// The second socketpair: fds[0] is ours (we relay on it), fds[1] becomes the
-	// child's stdin — the same fd-as-stdin arrangement Tart uses for us, so the
-	// link survives across the child's own privilege handling.
-	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
+	subnet, err := subnetFromEnv(os.Getenv("PT_NETFW_SUBNET"))
 	if err != nil {
-		return fmt.Errorf("socketpair: %w", err)
+		return err
 	}
-	setSocketBuffers(fds[0])
-	setSocketBuffers(fds[1])
-	shimSide := os.NewFile(uintptr(fds[0]), "softnet-shim-side")
-	childStdin := os.NewFile(uintptr(fds[1]), "softnet-child-stdin")
-	tartSide := os.Stdin // the link Tart handed us
 
-	// Spawn the real softnet with our argv forwarded verbatim; it understands the
-	// tart-supplied flags, we do not need to. It inherits our (root) privileges
-	// and does its own vmnet setup and privdrop.
-	child := exec.Command(realPath, os.Args[1:]...)
-	child.Stdin = childStdin
-	child.Stdout = os.Stdout // control-fd channel when Tart uses one
-	child.Stderr = os.Stderr
-	if err := child.Start(); err != nil {
-		return fmt.Errorf("start real softnet: %w", err)
+	// The one privileged step. Isolation keeps this sandbox off any other vmnet
+	// interface's guests, which no policy of ours would otherwise cover.
+	link, err := vmnetlink.Open(vmnetlink.Config{Subnet: subnet, Isolation: true})
+	if err != nil {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("%w\nthe shim must be installed setuid-root; run `pt setup-firewall`", err)
+		}
+		return err
 	}
-	childStdin.Close()
-	lg.printf("real softnet running pid=%d", child.Process.Pid)
+	defer link.Close()
 
-	// Root is no longer needed: drop to the invoking user before the long-lived
-	// relay and before touching any user-controlled input (the policy file).
+	// Root is no longer needed: the interface outlives the privilege. Drop before
+	// the long-lived relay, and before reading the policy file or a single guest
+	// frame.
 	if err := dropPrivileges(); err != nil {
-		_ = child.Process.Kill()
 		return fmt.Errorf("dropping privileges: %w", err)
 	}
 	lg.printf("privileges dropped to uid=%d gid=%d", os.Getuid(), os.Getgid())
 
+	macDesc := "off (no --vm-mac-address)"
+	if guestMAC != nil {
+		macDesc = guestMAC.String()
+	}
+	lg.printf("vmnet interface: subnet=%s gateway=%s max-packet=%d mac-enforcement=%s",
+		subnet, link.Gateway(), link.MaxPacketSize(), macDesc)
+
 	filter, desc := buildFilter(lg)
 	lg.printf("filter: %s", desc)
-
-	forwardSignals(child, lg)
 
 	var egress, ingress stats
 	var egressDecide, ingressDecide verdictFunc
@@ -92,34 +96,106 @@ func run(lg *logger) error {
 		egressDecide = filter.EgressFromGuest
 		ingressDecide = filter.IngressToGuest
 	}
+	if guestMAC != nil {
+		egressDecide = enforceSourceMAC(guestMAC, egressDecide, &egress, lg)
+	}
 
+	// Registered before any frame moves so a stop that arrives during the first
+	// moments of the relay is handled by us rather than by the default
+	// disposition, which would kill the guest's network without a word.
+	sigc := make(chan os.Signal, 4)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+
+	guest := datagramLink{os.Stdin} // the link Tart handed us
 	errc := make(chan error, 2)
-	go func() { errc <- relayFiltered(shimSide, tartSide, egressDecide, &egress) }()
-	go func() { errc <- relayFiltered(tartSide, shimSide, ingressDecide, &ingress) }()
+	go func() { errc <- relayFiltered(link, guest, egressDecide, &egress) }()
+	go func() { errc <- relayFiltered(guest, link, ingressDecide, &ingress) }()
 
 	stop := make(chan struct{})
 	go logStats(lg, &egress, &ingress, stop)
 
-	waitErr := child.Wait()
+	// Either end going quiet is a shutdown: Tart closing stdin means the VM is
+	// gone, and a link error means we have no network to relay onto. Closing the
+	// link unblocks the other direction's parked read.
+	reason := waitForShutdown(errc, sigc, lg)
 	close(stop)
-	lg.printf("real softnet exited (%v); egress frames=%d passed=%d dropped=%d rewrote=%d; ingress frames=%d passed=%d dropped=%d rewrote=%d",
-		waitErr,
-		egress.frames.Load(), egress.passed.Load(), egress.dropped.Load(), egress.rewrote.Load(),
-		ingress.frames.Load(), ingress.passed.Load(), ingress.dropped.Load(), ingress.rewrote.Load())
+	if err := link.Close(); err != nil {
+		lg.printf("closing vmnet interface: %v", err)
+	}
 
-	// Drain a relay error only to log it; the child's exit is the real signal.
+	lg.printf("shutdown (%s); egress frames=%d passed=%d dropped=%d rewrote=%d mac-dropped=%d; ingress frames=%d passed=%d dropped=%d rewrote=%d",
+		reason,
+		egress.frames.Load(), egress.passed.Load(), egress.dropped.Load(), egress.rewrote.Load(), egress.macDropped.Load(),
+		ingress.frames.Load(), ingress.passed.Load(), ingress.dropped.Load(), ingress.rewrote.Load())
+	return nil
+}
+
+// waitForShutdown blocks until a relay direction ends or Tart signals us, and
+// returns a short description for the log. A signal is a clean stop: Tart stops
+// softnet with SIGINT, and the caller closes the link, which ends both relay
+// goroutines. Relay errors are logged rather than returned — by the time either
+// side has failed there is nothing left to do but exit cleanly, and a nonzero
+// exit from "softnet" would be reported by Tart as a boot failure.
+func waitForShutdown(errc <-chan error, sigc <-chan os.Signal, lg *logger) string {
 	select {
 	case err := <-errc:
 		if err != nil {
 			lg.printf("relay ended: %v", err)
+			return "relay error"
 		}
-	default:
+		return "link closed"
+	case s := <-sigc:
+		return fmt.Sprintf("signal %v", s)
 	}
+}
 
-	if ee, ok := waitErr.(*exec.ExitError); ok {
-		os.Exit(ee.ExitCode())
+// subnetFromEnv parses PT_NETFW_SUBNET ("a.b.c.0/24"), falling back to
+// defaultSubnet when unset. A value that is set but malformed is fatal: pt
+// passes the subnet it verified free of host collisions, so a wrong one would
+// silently put the sandbox on a range that breaks host connectivity. Shape is
+// checked here as well as inside vmnetlink so a bad value fails before the
+// process asks for root.
+func subnetFromEnv(v string) (netip.Prefix, error) {
+	raw := v
+	if raw == "" {
+		raw = defaultSubnet
 	}
-	return waitErr
+	p, err := netip.ParsePrefix(raw)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("PT_NETFW_SUBNET=%q is not a CIDR prefix: %w", v, err)
+	}
+	if !p.Addr().Is4() || p.Bits() != 24 || p.Masked() != p {
+		return netip.Prefix{}, fmt.Errorf("PT_NETFW_SUBNET=%q must be an IPv4 /24 network address such as %s", v, defaultSubnet)
+	}
+	return p, nil
+}
+
+// parseVMMAC extracts the guest's MAC from Tart's `--vm-mac-address <mac>` (or
+// `--vm-mac-address=<mac>`). Everything else in argv is ignored: Tart also
+// passes --vm-fd and friends, which described the old external softnet's view of
+// the link and mean nothing now that the link is stdin. A missing flag disables
+// enforcement (direct invocation); a present but unparsable one is fatal, since
+// the alternative is silently relaying frames we were told to police.
+func parseVMMAC(argv []string) (net.HardwareAddr, error) {
+	const flag = "--vm-mac-address"
+	raw := ""
+	for i, a := range argv {
+		switch {
+		case a == flag && i+1 < len(argv):
+			raw = argv[i+1]
+		case strings.HasPrefix(a, flag+"="):
+			raw = strings.TrimPrefix(a, flag+"=")
+		}
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	mac, err := net.ParseMAC(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s %q is not a MAC address: %w", flag, raw, err)
+	}
+	return mac, nil
 }
 
 // buildFilter reads the policy file named by PT_NETFW_POLICY and returns a
@@ -149,19 +225,6 @@ func buildFilter(lg *logger) (*netfw.Filter, string) {
 	return f, fmt.Sprintf("restricted, %d allow patterns", len(doc.Allow))
 }
 
-// forwardSignals passes SIGINT/SIGTERM to the child. Tart stops softnet with
-// SIGINT; the child's exit is what ends the relay.
-func forwardSignals(child *exec.Cmd, lg *logger) {
-	sigc := make(chan os.Signal, 4)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		for s := range sigc {
-			lg.printf("forwarding %v to child", s)
-			_ = child.Process.Signal(s)
-		}
-	}()
-}
-
 func logStats(lg *logger, egress, ingress *stats, stop <-chan struct{}) {
 	if !lg.enabled() {
 		return
@@ -173,15 +236,9 @@ func logStats(lg *logger, egress, ingress *stats, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			lg.printf("egress frames=%d dropped=%d rewrote=%d | ingress frames=%d dropped=%d rewrote=%d",
-				egress.frames.Load(), egress.dropped.Load(), egress.rewrote.Load(),
+			lg.printf("egress frames=%d dropped=%d rewrote=%d mac-dropped=%d | ingress frames=%d dropped=%d rewrote=%d",
+				egress.frames.Load(), egress.dropped.Load(), egress.rewrote.Load(), egress.macDropped.Load(),
 				ingress.frames.Load(), ingress.dropped.Load(), ingress.rewrote.Load())
 		}
 	}
-}
-
-func setSocketBuffers(fd int) {
-	// Mirror Tart's sizing (Softnet.swift): 1 MiB send, 4x receive.
-	_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_SNDBUF, 1<<20)
-	_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4<<20)
 }

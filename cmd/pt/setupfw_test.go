@@ -87,4 +87,19 @@ func TestRunSetupFirewallInstallsAndEscalates(t *testing.T) {
 	if chown > chmod {
 		t.Errorf("chmod u+s must come after chown (chown clears setuid): %q", script)
 	}
+	// Only the shim is rooted: there is no external softnet binary any more.
+	if !strings.Contains(script, store.ShimPath()) {
+		t.Errorf("privileged script does not target the shim: %q", script)
+	}
+	if strings.Contains(script, "/bin/softnet") {
+		t.Errorf("privileged script still roots an external softnet: %q", script)
+	}
+
+	// The guidance must not send users to Homebrew or com.apple.vmnet.plist;
+	// pt pins the sandbox subnet itself.
+	for _, stale := range []string{"brew", "com.apple.vmnet", "bootpd"} {
+		if strings.Contains(out.String(), stale) {
+			t.Errorf("setup output still mentions %q:\n%s", stale, out.String())
+		}
+	}
 }

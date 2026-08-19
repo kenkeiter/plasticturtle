@@ -260,6 +260,56 @@ func TestParsePortSpecs(t *testing.T) {
 	}
 }
 
+func TestParseDomainList(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    []string
+		wantErr bool
+	}{
+		{in: "", want: nil},
+		{in: "  \n ", want: nil},
+		{in: "github.com", want: []string{"github.com"}},
+		// Newlines (the multiline field's natural separator), commas, and spaces
+		// all delimit.
+		{in: "github.com\nregistry.npmjs.org", want: []string{"github.com", "registry.npmjs.org"}},
+		{in: "github.com, *.githubusercontent.com", want: []string{"github.com", "*.githubusercontent.com"}},
+		// Canonicalized to the form the loader stores.
+		{in: "GitHub.com", want: []string{"github.com"}},
+		{in: "example.com.", want: []string{"example.com"}},
+		// Rejected by the shared grammar.
+		{in: "https://github.com", wantErr: true},
+		{in: "github.com/path", wantErr: true},
+		{in: "*.com", wantErr: true},
+		{in: "nodot", wantErr: true},
+		{in: "10.0.0.1", wantErr: true},
+		// Caught here so pt init can re-prompt rather than discarding answers.
+		{in: "github.com, github.com", wantErr: true},
+		{in: "github.com, GitHub.com.", wantErr: true},
+	}
+	for _, tc := range tests {
+		got, err := parseDomainList(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseDomainList(%q) = %v, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseDomainList(%q): %v", tc.in, err)
+			continue
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("parseDomainList(%q) = %v, want %v", tc.in, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("parseDomainList(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
 func TestListJSONIsAnArrayWhenEmpty(t *testing.T) {
 	e := testEnv(t)
 	var out bytes.Buffer

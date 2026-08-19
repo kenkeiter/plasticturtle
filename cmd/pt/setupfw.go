@@ -45,22 +45,16 @@ func runSetupFirewall(store *state.Store, shimSrc string, out io.Writer, priv pr
 	}
 	fmt.Fprintf(out, "Installed firewall shim: %s\n", dst)
 
-	// The shim shadows softnet on tart's PATH, so tart no longer roots the real
-	// softnet the way plain `tart --net-softnet` would. We must do it here: the
-	// shim execs the real softnet as root and refuses to unless it is root-owned
-	// and unwritable. Root both binaries in one escalation.
-	realSoftnet, err := locateRealSoftnet()
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "Found Softnet: %s\n", realSoftnet)
-
+	// The shim shadows softnet on tart's PATH, so tart no longer roots it the way
+	// plain `tart --net-softnet` would. We must do it here: the shim creates the
+	// VM's vmnet interface, which needs root.
+	//
 	// chown before chmod: chown clears the setuid bit, so setting it last is what
 	// makes the order load-bearing. One sudo invocation does all of it.
-	fmt.Fprintln(out, "Granting root to the shim and Softnet (sudo may prompt for your password)…")
-	script := fmt.Sprintf("chown root %q %q && chmod u+s %q %q", dst, realSoftnet, dst, realSoftnet)
+	fmt.Fprintln(out, "Granting root to the shim (sudo may prompt for your password)…")
+	script := fmt.Sprintf("chown root %q && chmod u+s %q", dst, dst)
 	if err := priv("sh", "-c", script); err != nil {
-		return fmt.Errorf("make shim/softnet setuid-root: %w", err)
+		return fmt.Errorf("make shim setuid-root: %w", err)
 	}
 
 	if err := verifyShim(dst); err != nil {
@@ -69,9 +63,9 @@ func runSetupFirewall(store *state.Store, shimSrc string, out io.Writer, priv pr
 	fmt.Fprintln(out, "Firewall shim is installed and setuid-root.")
 	fmt.Fprintln(out, "Projects with `network: { policy: restricted }` will now be enforced.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Note: software networking assigns the sandbox a private subnet. If it")
-	fmt.Fprintln(out, "collides with your LAN, pt will refuse the boot and tell you. You can pin")
-	fmt.Fprintln(out, "vmnet to an unused range in /etc/bootpd.plist or com.apple.vmnet.plist.")
+	fmt.Fprintln(out, "Note: the shim provides the sandbox's networking itself. pt picks the")
+	fmt.Fprintln(out, "sandbox subnet from 192.168.200.0/24–192.168.252.0/24, skipping any range")
+	fmt.Fprintln(out, "your host already uses, and refuses the boot if one collides anyway.")
 	return nil
 }
 
@@ -99,30 +93,6 @@ func locateShimBinary(explicit string) (string, error) {
 	}
 	return "", errors.New("could not find the pt-softnet-shim binary; build it with `make build` " +
 		"and keep it next to pt, or pass --shim <path>")
-}
-
-// trustedSoftnetPaths mirrors the shim's own list: the standard Homebrew
-// locations Softnet ships to. setup roots whichever it finds so the shim's
-// safety check will later pass.
-var trustedSoftnetPaths = []string{
-	"/opt/homebrew/bin/softnet",
-	"/usr/local/bin/softnet",
-}
-
-// locateRealSoftnet returns the resolved path of the installed Softnet binary,
-// following symlinks (Homebrew's bin/softnet points into Cellar) so the chown
-// targets the real file rather than a link.
-func locateRealSoftnet() (string, error) {
-	for _, p := range trustedSoftnetPaths {
-		real, err := filepath.EvalSymlinks(p)
-		if err != nil {
-			continue
-		}
-		if fi, err := os.Stat(real); err == nil && fi.Mode().IsRegular() {
-			return real, nil
-		}
-	}
-	return "", fmt.Errorf("Softnet is not installed in %v; install it (e.g. `brew install cirruslabs/cli/softnet`) and re-run", trustedSoftnetPaths)
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {

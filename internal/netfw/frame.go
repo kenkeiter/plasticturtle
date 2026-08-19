@@ -116,6 +116,76 @@ func (v ipv4View) udpPayload() ([]byte, bool) {
 	return v.frame[start:end], true
 }
 
+// tcpACK reports whether the frame is TCP with the ACK flag set. Segments of an
+// established connection (including RST+ACK and FIN+ACK) all carry ACK; a bare
+// SYN does not, which is what lets the filter distinguish reply traffic from a
+// connection the guest is initiating.
+func (v ipv4View) tcpACK() bool {
+	if v.proto != protoTCP || len(v.frame) < v.l4+14 {
+		return false
+	}
+	return v.frame[v.l4+13]&0x10 != 0
+}
+
+// isLimitedBroadcast reports whether ip is 255.255.255.255, the destination of
+// a guest's initial DHCP DISCOVER/REQUEST.
+func isLimitedBroadcast(ip netip.Addr) bool {
+	return ip == netip.AddrFrom4([4]byte{255, 255, 255, 255})
+}
+
+// BOOTP layout constants for parseDHCPReplyInfra.
+const (
+	bootpReply      = 2
+	bootpOptionsOff = 236 // fixed BOOTP header before the magic cookie
+)
+
+// dhcpMagicCookie precedes the options in every DHCP message.
+var dhcpMagicCookie = [4]byte{99, 130, 83, 99}
+
+// parseDHCPReplyInfra extracts the infrastructure addresses a DHCP reply names:
+// the router (option 3), the DNS servers (option 6), and the server identifier
+// (option 54). These are the addresses the host's stack lives at on the vmnet
+// link; the filter must let the guest talk to them or pt's own SSH control
+// channel is firewalled out. Anything malformed yields nil — the frame still
+// passes (it is DHCP either way), it just pins nothing.
+func parseDHCPReplyInfra(payload []byte) []netip.Addr {
+	if len(payload) < bootpOptionsOff+4 || payload[0] != bootpReply {
+		return nil
+	}
+	if [4]byte(payload[bootpOptionsOff:bootpOptionsOff+4]) != dhcpMagicCookie {
+		return nil
+	}
+	var out []netip.Addr
+	opts := payload[bootpOptionsOff+4:]
+	for i := 0; i < len(opts); {
+		code := opts[i]
+		switch code {
+		case 0: // pad
+			i++
+			continue
+		case 255: // end
+			return out
+		}
+		if i+2 > len(opts) {
+			return out
+		}
+		length := int(opts[i+1])
+		val := opts[i+2:]
+		if length > len(val) {
+			return out
+		}
+		val = val[:length]
+		switch code {
+		case 3, 6, 54: // router, DNS servers, server identifier
+			for ; len(val) >= 4; val = val[4:] {
+				out = append(out, netip.AddrFrom4([4]byte(val[:4])))
+			}
+		}
+		i += 2 + length
+	}
+	return out
+}
+
 // arec is one address answer harvested from a DNS response.
 type arec struct {
 	ip  netip.Addr

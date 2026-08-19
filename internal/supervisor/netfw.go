@@ -21,7 +21,7 @@ func (r *run) restricted() bool {
 // networkRunOpts returns the tart run additions for the network policy: for an
 // open policy, the zero values (unchanged behavior); for a restricted policy,
 // --net-softnet plus the environment that shadows softnet with the firewall
-// shim and names the written policy file.
+// shim, names the written policy file, and pins the sandbox subnet.
 //
 // It fails the boot if the shim is not correctly installed. That is deliberate:
 // a restricted policy that silently fell back to open networking would be a
@@ -35,21 +35,45 @@ func (r *run) networkRunOpts() (softnet bool, env []string, err error) {
 		return false, nil, fmt.Errorf("restricted network policy needs the firewall shim: %w\n"+
 			"install it once with: pt setup-firewall", err)
 	}
+	ifaces, err := readHostIfaces()
+	if err != nil {
+		return false, nil, fmt.Errorf("network: cannot enumerate host interfaces to pick a sandbox subnet: %w", err)
+	}
+	subnet, err := chooseSandboxSubnet(ifaces)
+	if err != nil {
+		return false, nil, err
+	}
 	policyPath, err := r.writePolicyFile()
 	if err != nil {
 		return false, nil, err
 	}
 
-	shimDir := filepath.Dir(shim)
-	env = []string{
+	env = shimEnv(
+		filepath.Dir(shim),
+		policyPath,
+		filepath.Join(r.d.Store.ProjectDir(r.p.ProjectID), "softnet-shim.log"),
+		subnet,
+	)
+	r.logf("network: restricted; %d allowed domains; subnet %s; shim %s",
+		len(r.p.Config.Network.Allow), subnet, shim)
+	return true, env, nil
+}
+
+// shimEnv is the environment tart is launched with under a restricted policy,
+// and through tart the shim it spawns. It is a pure function so the contract
+// with the shim can be asserted without an installed setuid binary.
+func shimEnv(shimDir, policyPath, logPath string, subnet netip.Prefix) []string {
+	return []string{
 		// Shim dir first so tart resolves our "softnet"; the rest of PATH stays
-		// so tart itself (and the shim's trusted-path lookup fallbacks) resolve.
+		// so tart itself resolves.
 		"PATH=" + shimDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"PT_NETFW_POLICY=" + policyPath,
-		"PT_SHIM_LOG=" + filepath.Join(r.d.Store.ProjectDir(r.p.ProjectID), "softnet-shim.log"),
+		"PT_SHIM_LOG=" + logPath,
+		// The shim creates the vmnet interface itself and needs the subnet
+		// explicitly: macOS hands raw vmnet clients a hardcoded 192.168.2.0/24
+		// otherwise, and ignores com.apple.vmnet.plist.
+		"PT_NETFW_SUBNET=" + subnet.String(),
 	}
-	r.logf("network: restricted; %d allowed domains; shim %s", len(r.p.Config.Network.Allow), shim)
-	return true, env, nil
 }
 
 // writePolicyFile renders the resolved allowlist as the shim's policy document
@@ -113,12 +137,69 @@ type hostIface struct {
 	isVMNet  bool // a vmnet bridge (bridge*), which legitimately shares the subnet
 }
 
+// Sandbox subnet candidates: 192.168.<high>.0/24 down to 192.168.<low>.0/24.
+// The high end of 192.168/16 is scanned downward because consumer routers hand
+// out the low end (0, 1, 2, 100…), so the first candidates are the least likely
+// to be taken.
+const (
+	sandboxSubnetHigh = 252
+	sandboxSubnetLow  = 200
+)
+
+// chooseSandboxSubnet returns the highest free /24 in the candidate range for
+// the sandbox network. pt must pick the subnet itself and hand it to the shim:
+// macOS gives raw vmnet clients a hardcoded 192.168.2.0/24 — a range in common
+// use on home and office LANs — and ignores com.apple.vmnet.plist, but it does
+// honor an explicitly requested subnet.
+//
+// A candidate is free only if it overlaps no host interface network at all.
+// vmnet bridges are included here, unlike in detectSubnetCollision: a bridge
+// already on a candidate belongs to another running VM, whose network we would
+// otherwise duplicate.
+func chooseSandboxSubnet(ifaces []hostIface) (netip.Prefix, error) {
+	for third := sandboxSubnetHigh; third >= sandboxSubnetLow; third-- {
+		cand := netip.PrefixFrom(netip.AddrFrom4([4]byte{192, 168, byte(third), 0}), 24)
+		if !overlapsAnyIface(cand, ifaces) {
+			return cand, nil
+		}
+	}
+	return netip.Prefix{}, fmt.Errorf(
+		"network: no free subnet for the sandbox: host interfaces occupy every candidate "+
+			"from 192.168.%d.0/24 to 192.168.%d.0/24.\n"+
+			"Disconnect a VPN or virtual network that spans this range and retry",
+		sandboxSubnetHigh, sandboxSubnetLow)
+}
+
+// overlapsAnyIface reports whether the candidate shares address space with any
+// IPv4 network configured on the host.
+func overlapsAnyIface(cand netip.Prefix, ifaces []hostIface) bool {
+	for _, ifc := range ifaces {
+		for _, p := range ifc.prefixes {
+			if !p.Addr().Is4() {
+				continue
+			}
+			if prefixesOverlap(cand, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// prefixesOverlap reports whether two networks share any address, in either
+// direction of containment (a /16 host route swallows a /24 sandbox).
+func prefixesOverlap(a, b netip.Prefix) bool {
+	return a.Contains(b.Masked().Addr()) || b.Contains(a.Masked().Addr())
+}
+
 // checkVMNetCollision aborts the boot if the guest's subnet collides with a real
-// host network. Under softnet, vmnet chooses the guest subnet; when that choice
-// lands on the same range as the host's LAN, the host's bridge steals addresses
-// (a gateway, a DNS server) from the real network and host connectivity breaks.
-// Detecting it lets pt tear down — restoring the host — with a clear message,
-// rather than leaving the user with mysteriously broken networking.
+// host network. pt pins the sandbox subnet before boot, so this is a backstop:
+// it catches a subnet that was not applied as asked, or an interface (a VPN, a
+// docking station) that appeared between the choice and the boot. When the two
+// networks share a range, the host's bridge steals addresses (a gateway, a DNS
+// server) from the real network and host connectivity breaks. Detecting it lets
+// pt tear down — restoring the host — with a clear message, rather than leaving
+// the user with mysteriously broken networking.
 func (r *run) checkVMNetCollision() error {
 	if !r.restricted() || r.vmIP == "" {
 		return nil
@@ -134,7 +215,10 @@ func (r *run) checkVMNetCollision() error {
 	}
 	if detail, collides := detectSubnetCollision(guest, ifaces); collides {
 		return fmt.Errorf("network: the sandbox subnet collides with a host network (%s).\n"+
-			"This breaks host connectivity. Pin vmnet to an unused range (see `pt setup-firewall`) and retry", detail)
+			"This breaks host connectivity. pt picks an unused subnet before boot, so either the\n"+
+			"pinned subnet was not applied or this interface appeared mid-boot; retry, and if it\n"+
+			"persists check for a VPN or virtual network covering 192.168.%d.0–192.168.%d.0",
+			detail, sandboxSubnetLow, sandboxSubnetHigh)
 	}
 	return nil
 }
@@ -153,8 +237,7 @@ func detectSubnetCollision(guest netip.Addr, ifaces []hostIface) (string, bool) 
 			if !p.Addr().Is4() {
 				continue
 			}
-			// Collision if either network contains the other's base address.
-			if guest24.Contains(p.Addr()) || p.Masked().Contains(guest) {
+			if prefixesOverlap(guest24, p) {
 				return fmt.Sprintf("%s on interface %s overlaps sandbox %s", p, ifc.name, guest24), true
 			}
 		}

@@ -451,9 +451,8 @@ domains and simply cannot connect for the rest.
 
 ### One-time setup
 
-Enforcement runs on the host, in a small shim that wraps
-[Softnet](https://github.com/cirruslabs/softnet) (Tart's software-networking
-layer). Install it once:
+Enforcement runs on the host, in a small shim that provides the guest's network
+itself. Install it once:
 
 ```sh
 pt setup-firewall     # copies the shim into place; sudo makes it setuid-root
@@ -467,12 +466,20 @@ firewall fails closed rather than silently letting traffic through.
 ### How it works
 
 Tart resolves the `softnet` binary from its `PATH`; for a restricted project, pt
-puts its shim there first. The shim spawns the real Softnet as a child and relays
-the guest's ethernet frames between them, enforcing the policy by **DNS-pinning**:
-it watches DNS answers for allowed names, records the returned IPs in a
-short-lived (TTL-bounded) allow-set, and drops any guest frame whose destination
-is not pinned. Root is used only to launch the child; the long-lived relay then
-drops back to your user.
+puts its shim there first, and tart hands it the guest's ethernet link. The shim
+is the whole software-networking layer: it opens a NAT interface through
+Apple's `vmnet.framework` (via cgo) and relays the guest's ethernet frames onto
+it, enforcing the policy by **DNS-pinning**: it watches DNS answers for allowed
+names, records the returned IPs in a short-lived (TTL-bounded) allow-set, and
+drops any guest frame whose destination is not pinned. Root is used only to
+create the vmnet interface; the long-lived relay then drops back to your user.
+There is no external Softnet to install.
+
+pt also chooses the sandbox's subnet before boot — the highest free `/24`
+between `192.168.252.0/24` and `192.168.200.0/24`, skipping any range a host
+interface already uses — and passes it to the shim, which asks vmnet for exactly
+that. This is not cosmetic: macOS 26 ignores `com.apple.vmnet.plist` and gives
+raw vmnet clients a hardcoded `192.168.2.0/24`, a range plenty of LANs are on.
 
 ### What it does and does not stop
 
@@ -488,10 +495,10 @@ drops back to your user.
   can exfiltrate small amounts of data by encoding it in DNS lookups. The
   firewall restricts where the guest can *connect*, not what it can *ask to
   resolve*.
-- **Subnet collisions.** Software networking assigns the sandbox a private
-  subnet; if it lands on the same range as your LAN, host connectivity breaks.
-  pt detects this after boot and refuses with an explanation rather than leaving
-  you with mysteriously broken networking.
+- **Subnet collisions.** If the sandbox's subnet ends up on the same range as
+  your LAN, host connectivity breaks. pt picks an unused range before boot to
+  avoid it, and re-checks after boot: on a collision it refuses with an
+  explanation rather than leaving you with mysteriously broken networking.
 
 ## The guest filesystem
 

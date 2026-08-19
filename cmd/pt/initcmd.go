@@ -58,8 +58,12 @@ func runInit(e *env, path string, out io.Writer, interactive bool) error {
 	if err != nil {
 		return err
 	}
+	network, err := promptNetwork()
+	if err != nil {
+		return err
+	}
 
-	cfg := &config.Config{Version: config.SchemaVersion, Image: image, Ports: ports}
+	cfg := &config.Config{Version: config.SchemaVersion, Image: image, Ports: ports, Network: network}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -206,6 +210,77 @@ func promptPorts() ([]config.Port, error) {
 		return nil, err
 	}
 	return parsePortSpecs(line)
+}
+
+// promptNetwork asks for the outbound network posture and, under a restricted
+// policy, the domains to allow. Choosing "open" returns a nil *Network: open is
+// the default a nil block already means, so the written file keeps the tidy
+// commented example rather than an explicit `policy: open`.
+func promptNetwork() (*config.Network, error) {
+	const restricted = "restricted"
+	var policy string
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Network").
+			Description("Outbound access from the guest. Restricted is default-deny: only the domains you list are reachable, and tools that ignore it simply get no connectivity.").
+			Options(
+				huh.NewOption("Open — full internet and LAN access", string(config.NetOpen)),
+				huh.NewOption("Restricted — only domains you allow", restricted),
+			).
+			Value(&policy),
+	))
+	if err := form.Run(); err != nil {
+		return nil, err
+	}
+	if policy != restricted {
+		return nil, nil
+	}
+
+	var lines string
+	entry := huh.NewForm(huh.NewGroup(
+		huh.NewText().
+			Title("Allowed domains").
+			Description("One per line (or comma separated). A leading *. matches any subdomain. Example: github.com, *.githubusercontent.com").
+			Value(&lines).
+			Validate(func(s string) error {
+				_, err := parseDomainList(s)
+				return err
+			}),
+	))
+	if err := entry.Run(); err != nil {
+		return nil, err
+	}
+	allow, err := parseDomainList(lines)
+	if err != nil {
+		return nil, err
+	}
+	// An empty allowlist under a restricted policy is valid (it denies all
+	// egress), so it is not rejected here — the description says as much.
+	return &config.Network{Policy: config.NetRestricted, Allow: allow}, nil
+}
+
+// parseDomainList splits a free-text field of domain patterns on commas and
+// whitespace (so newline-separated and comma-separated both work) and validates
+// each through the same grammar the config loader enforces, returning the
+// canonical forms. Like parsePortSpecs, it lives apart from the prompt so the
+// field validator can call it and the parse is testable on its own.
+func parseDomainList(s string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, field := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	}) {
+		norm, err := config.NormalizeDomainPattern(field)
+		if err != nil {
+			return nil, err
+		}
+		if seen[norm] {
+			return nil, fmt.Errorf("%q is listed twice", field)
+		}
+		seen[norm] = true
+		out = append(out, norm)
+	}
+	return out, nil
 }
 
 // parsePortSpecs parses "3000, 5432:15432" into port mappings. An omitted host

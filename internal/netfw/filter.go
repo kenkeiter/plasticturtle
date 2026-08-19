@@ -50,6 +50,13 @@ type Filter struct {
 
 	mu   sync.Mutex
 	pins *PinTable
+	// infra is the set of host-side infrastructure addresses learned from DHCP
+	// replies (router, DNS server, DHCP server identifier). The host runs pt's
+	// SSH control channel and port forwards from these addresses, so traffic
+	// with them is not subject to the domain policy: ingress from infra always
+	// passes, egress to infra passes only as reply traffic (TCP ACK set) so the
+	// guest still cannot initiate connections to host services.
+	infra map[netip.Addr]struct{}
 
 	// onDeny, if set, is called (without the lock held) with a short reason each
 	// time a frame is dropped or rewritten. The shim uses it to log the domain a
@@ -78,6 +85,7 @@ func New(cfg Config) *Filter {
 		matcher: NewMatcher(cfg.Allow),
 		now:     now,
 		pins:    NewPinTable(),
+		infra:   make(map[netip.Addr]struct{}),
 		onDeny:  cfg.OnDeny,
 	}
 }
@@ -90,7 +98,14 @@ func New(cfg Config) *Filter {
 //     unfiltered path around the whole policy.
 //   - DNS to any resolver is passed so the guest can resolve names; the answers
 //     are what IngressToGuest pins on.
-//   - DHCP is passed so the guest keeps its lease.
+//   - DHCP is passed to broadcast or to known infrastructure so the guest keeps
+//     its lease. Unicast "DHCP" to arbitrary hosts is dropped: allowing it would
+//     let the guest open a NAT mapping to a colluding server whose forged reply
+//     would then poison the infra set.
+//   - Reply traffic to infrastructure (TCP with ACK set) is passed — that is
+//     the guest's half of pt's own SSH control channel and port forwards. A
+//     bare SYN toward the host is still dropped: being reachable FROM the host
+//     does not grant the guest access TO host services.
 //   - Any other IPv4 frame is passed only if its destination is pinned.
 func (f *Filter) EgressFromGuest(frame []byte) Verdict {
 	switch etherType(frame) {
@@ -110,12 +125,25 @@ func (f *Filter) EgressFromGuest(frame []byte) Verdict {
 			return pass // outbound query; pinning happens on the reply
 		}
 		if isDHCP(sp, dp) {
-			return pass
+			if isLimitedBroadcast(v.dst) {
+				return pass
+			}
+			f.mu.Lock()
+			_, toInfra := f.infra[v.dst.Unmap()]
+			f.mu.Unlock()
+			if toInfra {
+				return pass // unicast renewal to the known DHCP server
+			}
+			return f.deny("blocked DHCP-port egress to non-infrastructure %s", v.dst)
 		}
 	}
 	f.mu.Lock()
-	allowed := f.pins.Allowed(v.dst, f.now())
+	_, toInfra := f.infra[v.dst.Unmap()]
+	allowed := toInfra || f.pins.Allowed(v.dst, f.now())
 	f.mu.Unlock()
+	if toInfra && !v.tcpACK() {
+		return f.deny("blocked guest-initiated egress to host %s", v.dst)
+	}
 	if allowed {
 		return pass
 	}
@@ -125,9 +153,16 @@ func (f *Filter) EgressFromGuest(frame []byte) Verdict {
 // IngressToGuest rules on a frame arriving for the guest. It is where allowed
 // DNS answers are pinned and disallowed ones are rewritten to NXDOMAIN.
 //
-//   - ARP and DHCP replies are passed.
+//   - ARP and DHCP replies are passed; DHCP replies are also snooped for the
+//     router/DNS/server-identifier addresses, which become the infra set. Only
+//     ingress is snooped, and egress DHCP is restricted to broadcast/infra, so
+//     the only party who can populate the set is the host's own DHCP server.
 //   - A DNS response for an allowed name has its A records pinned, then passes.
-//   - A DNS response for a disallowed name is replaced with NXDOMAIN.
+//   - A DNS response for a disallowed name is replaced with NXDOMAIN. This runs
+//     before the infra check: the host's resolver lives at an infra address,
+//     and its answers must still be policy-filtered.
+//   - Anything from an infra address passes: it is the host side of pt's SSH
+//     control channel and port forwards.
 //   - Any other IPv4 frame passes only if its source is already pinned (it is
 //     return traffic for a connection egress permitted).
 func (f *Filter) IngressToGuest(frame []byte) Verdict {
@@ -145,6 +180,7 @@ func (f *Filter) IngressToGuest(frame []byte) Verdict {
 	}
 	if sp, dp, ok := v.l4Ports(); ok {
 		if isDHCP(sp, dp) {
+			f.snoopDHCPReply(v)
 			return pass
 		}
 		if sp == dnsPort {
@@ -152,12 +188,44 @@ func (f *Filter) IngressToGuest(frame []byte) Verdict {
 		}
 	}
 	f.mu.Lock()
-	allowed := f.pins.Allowed(v.src, f.now())
+	_, fromInfra := f.infra[v.src.Unmap()]
+	allowed := fromInfra || f.pins.Allowed(v.src, f.now())
 	f.mu.Unlock()
 	if allowed {
 		return pass
 	}
 	return f.deny("dropped ingress from unpinned %s", v.src)
+}
+
+// maxInfra bounds the infra set. A well-behaved DHCP server names a handful of
+// addresses; the cap only matters if something on the link misbehaves.
+const maxInfra = 32
+
+// snoopDHCPReply harvests infrastructure addresses from a DHCP reply, plus the
+// reply's own source address (the server that answered). Addresses accumulate
+// for the VM's lifetime: infrastructure does not move, and expiring the host
+// out of its own control channel would strand the session.
+func (f *Filter) snoopDHCPReply(v ipv4View) {
+	payload, ok := v.udpPayload()
+	if !ok {
+		return
+	}
+	addrs := parseDHCPReplyInfra(payload)
+	if len(addrs) == 0 {
+		return
+	}
+	addrs = append(addrs, v.src)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range addrs {
+		if len(f.infra) >= maxInfra {
+			break
+		}
+		if a.IsUnspecified() {
+			continue
+		}
+		f.infra[a.Unmap()] = struct{}{}
+	}
 }
 
 // handleDNSResponse pins allowed answers or rewrites disallowed ones. A response

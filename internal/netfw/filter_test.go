@@ -195,3 +195,109 @@ func TestClampTTL(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterAllowsHostControlTrafficAfterDHCP(t *testing.T) {
+	f, _, _ := newTestFilter(t, "github.com")
+
+	// Before any DHCP reply the host is unknown: its SSH probe is dropped.
+	probe := tcpFrame(gwMAC, guestMAC, gwIP, guestIP, 51000, 22)
+	if v := f.IngressToGuest(probe); v.Action != Drop {
+		t.Fatalf("pre-DHCP host SSH probe = %v, want Drop", v.Action)
+	}
+
+	// The DHCP ACK names the gateway as router/DNS/server; it passes and is
+	// snooped.
+	ack := udpFrame(gwMAC, guestMAC, gwIP, guestIP, 67, 68, dhcpAckPayload(gwIP, gwIP, gwIP))
+	if v := f.IngressToGuest(ack); v.Action != Pass {
+		t.Fatalf("DHCP ACK ingress = %v, want Pass", v.Action)
+	}
+
+	// Now the host's SSH probe reaches the guest, and the guest's replies
+	// (ACK-bearing segments) flow back.
+	if v := f.IngressToGuest(probe); v.Action != Pass {
+		t.Fatalf("post-DHCP host SSH probe = %v, want Pass", v.Action)
+	}
+	synack := tcpAckFrame(guestMAC, gwMAC, guestIP, gwIP, 22, 51000)
+	if v := f.EgressFromGuest(synack); v.Action != Pass {
+		t.Fatalf("guest SSH reply to host = %v, want Pass", v.Action)
+	}
+
+	// A guest-initiated connection to the host is still refused.
+	syn := tcpFrame(guestMAC, gwMAC, guestIP, gwIP, 40000, 8080)
+	if v := f.EgressFromGuest(syn); v.Action != Drop {
+		t.Fatalf("guest-initiated SYN to host = %v, want Drop", v.Action)
+	}
+}
+
+func TestFilterInfraOutranksDNSPins(t *testing.T) {
+	// An allowed name resolving to the gateway (DNS rebinding toward the host)
+	// must not grant the guest a connection to host services.
+	f, _, _ := newTestFilter(t, "github.com")
+	ack := udpFrame(gwMAC, guestMAC, gwIP, guestIP, 67, 68, dhcpAckPayload(gwIP, gwIP, gwIP))
+	if v := f.IngressToGuest(ack); v.Action != Pass {
+		t.Fatalf("DHCP ACK ingress = %v, want Pass", v.Action)
+	}
+	resp := udpFrame(gwMAC, guestMAC, gwIP, guestIP, dnsPort, 34000,
+		dnsResponseA(t, 3, "github.com", []arec{{ip: gwIP, ttl: 300}}))
+	if v := f.IngressToGuest(resp); v.Action != Pass {
+		t.Fatalf("rebinding DNS response = %v, want Pass", v.Action)
+	}
+	syn := tcpFrame(guestMAC, gwMAC, guestIP, gwIP, 40000, 8080)
+	if v := f.EgressFromGuest(syn); v.Action != Drop {
+		t.Fatalf("SYN to host pinned via rebinding = %v, want Drop", v.Action)
+	}
+}
+
+func TestFilterEgressDHCPOnlyToBroadcastOrInfra(t *testing.T) {
+	f, _, denials := newTestFilter(t)
+	evil := netip.MustParseAddr("203.0.113.50")
+
+	// Unicast "DHCP" to an arbitrary host would open a NAT mapping whose forged
+	// reply could poison the infra set; it is dropped.
+	leak := udpFrame(guestMAC, gwMAC, guestIP, evil, 68, 67, []byte("boot"))
+	if v := f.EgressFromGuest(leak); v.Action != Drop {
+		t.Fatalf("unicast DHCP egress to internet = %v, want Drop", v.Action)
+	}
+	if len(*denials) == 0 {
+		t.Fatal("expected a deny reason for unicast DHCP egress")
+	}
+
+	// After the real server is snooped, unicast renewal to it is fine.
+	ack := udpFrame(gwMAC, guestMAC, gwIP, guestIP, 67, 68, dhcpAckPayload(gwIP, gwIP, gwIP))
+	if v := f.IngressToGuest(ack); v.Action != Pass {
+		t.Fatalf("DHCP ACK ingress = %v, want Pass", v.Action)
+	}
+	renew := udpFrame(guestMAC, gwMAC, guestIP, gwIP, 68, 67, []byte("boot"))
+	if v := f.EgressFromGuest(renew); v.Action != Pass {
+		t.Fatalf("unicast DHCP renewal to server = %v, want Pass", v.Action)
+	}
+}
+
+func TestParseDHCPReplyInfra(t *testing.T) {
+	router := netip.MustParseAddr("192.168.252.1")
+	dns := netip.MustParseAddr("192.168.252.1")
+	server := netip.MustParseAddr("192.168.252.1")
+	got := parseDHCPReplyInfra(dhcpAckPayload(router, dns, server))
+	if len(got) != 3 {
+		t.Fatalf("parsed %d addrs, want 3: %v", len(got), got)
+	}
+	for _, a := range got {
+		if a != router {
+			t.Fatalf("unexpected infra addr %v", a)
+		}
+	}
+	// A request (op=1), a truncated payload, and a bad cookie all yield nil.
+	req := dhcpAckPayload(router, dns, server)
+	req[0] = 1
+	if parseDHCPReplyInfra(req) != nil {
+		t.Fatal("BOOTREQUEST must not yield infra addrs")
+	}
+	if parseDHCPReplyInfra([]byte("short")) != nil {
+		t.Fatal("truncated payload must not yield infra addrs")
+	}
+	bad := dhcpAckPayload(router, dns, server)
+	bad[bootpOptionsOff] = 0
+	if parseDHCPReplyInfra(bad) != nil {
+		t.Fatal("bad magic cookie must not yield infra addrs")
+	}
+}

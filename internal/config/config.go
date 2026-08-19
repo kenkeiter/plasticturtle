@@ -331,6 +331,12 @@ func validateNetwork(n *Network) []error {
 	return errs
 }
 
+// NormalizeDomainPattern validates one allowlist entry and returns its
+// canonical form, or an error describing why it is not a usable domain pattern.
+// It is exported so an interactive front end (pt init) can validate a domain as
+// it is typed, using exactly the grammar the config loader will later enforce.
+func NormalizeDomainPattern(pat string) (string, error) { return normalizeDomainPattern(pat) }
+
 // normalizeDomainPattern validates one allow entry and returns its canonical
 // (lowercased, trailing-dot-stripped) form. The accepted shapes are an exact
 // domain and a single leading "*." wildcard; anything with a scheme, port,
@@ -671,7 +677,7 @@ func Template(c *Config, generatedAt time.Time) ([]byte, error) {
 	b.WriteString("# default-DENY and only connections to the domains below are allowed —\n")
 	b.WriteString("# tools that ignore the policy simply get no connectivity (fail closed).\n")
 	b.WriteString("# A leading *. matches any subdomain. Enforcement is host-side and needs\n")
-	b.WriteString("# the softnet shim installed once; run `pt doctor` if a boot complains.\n")
+	b.WriteString("# the firewall shim installed once; run `pt setup-firewall` if a boot complains.\n")
 	if n := check.Network; n != nil && n.Policy != "" {
 		b.WriteString("network:\n")
 		b.WriteString("  policy: " + yamlScalar(string(n.Policy)) + "\n")
