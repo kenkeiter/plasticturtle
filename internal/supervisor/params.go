@@ -55,6 +55,14 @@ func (p *Params) validate() error {
 	if strings.TrimSpace(p.Config.Image) == "" {
 		errs = append(errs, errors.New("supervisor: config names no image"))
 	}
+	if p.Persist && strings.Contains(p.Config.Image, "/") {
+		// A registry reference names a cached OCI image, not a VM anyone owns:
+		// booting it in place would write the guest's changes into the image
+		// cache, where the next pull silently discards them. pt shell says the
+		// same thing on a terminal; this is the layer that catches a _supervise
+		// invoked by hand.
+		errs = append(errs, fmt.Errorf("supervisor: cannot persist %q: it is a remote image reference, not a local vm", p.Config.Image))
+	}
 	if !filepath.IsAbs(p.Config.ProjectPath) {
 		errs = append(errs, fmt.Errorf("supervisor: project path %q is not absolute", p.Config.ProjectPath))
 	}

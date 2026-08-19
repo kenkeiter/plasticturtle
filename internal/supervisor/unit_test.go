@@ -167,6 +167,24 @@ func TestEncodeParamsRejectsInvalid(t *testing.T) {
 	}
 }
 
+// TestPersistRejectsRemoteImages: booting a cached OCI image in place would
+// write the guest's changes somewhere the next pull throws away, so the answer
+// is no rather than a surprise later.
+func TestPersistRejectsRemoteImages(t *testing.T) {
+	p := validParams(t)
+	p.Persist = true
+	p.Config.Image = "ghcr.io/cirruslabs/macos-tahoe-base:latest"
+	if err := EncodeParams(&bytes.Buffer{}, p); err == nil {
+		t.Error("EncodeParams accepted --persist on a registry reference")
+	}
+
+	// The same image is fine for the ordinary path, which clones it.
+	p.Persist = false
+	if err := EncodeParams(&bytes.Buffer{}, p); err != nil {
+		t.Errorf("EncodeParams rejected a registry reference without --persist: %v", err)
+	}
+}
+
 // writeJSON encodes without validating, so that ParseParams' own checks — not
 // EncodeParams' — are what the table above exercises.
 func writeJSON(w *bytes.Buffer, p *Params) error {

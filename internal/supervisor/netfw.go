@@ -33,7 +33,7 @@ func (r *run) networkRunOpts() (softnet bool, env []string, err error) {
 	shim := r.d.Store.ShimPath()
 	if err := verifyShim(shim, os.Stat); err != nil {
 		return false, nil, fmt.Errorf("restricted network policy needs the firewall shim: %w\n"+
-			"install it once with: pt setup-firewall", err)
+			"install it once with: pt setup", err)
 	}
 	ifaces, err := readHostIfaces()
 	if err != nil {
@@ -95,7 +95,7 @@ func (r *run) writePolicyFile() (string, error) {
 }
 
 // VerifyShim checks that the installed firewall shim is safe for tart to run
-// setuid. It is exported so `pt setup-firewall` fails setup the same way a boot
+// setuid. It is exported so `pt setup` fails setup the same way a boot
 // would, from one definition of "correctly installed".
 func VerifyShim(path string) error { return verifyShim(path, os.Stat) }
 

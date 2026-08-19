@@ -12,6 +12,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/ptcfg"
 	"github.com/kenkeiter/plasticturtle/internal/state"
 	"github.com/kenkeiter/plasticturtle/internal/supervisor"
+	"github.com/kenkeiter/plasticturtle/internal/tart"
 )
 
 // A config that was never allowed must not reach tart, and must not produce a
@@ -148,6 +149,160 @@ func TestRunCreatePathSpawnsSupervisorWithResolvedParams(t *testing.T) {
 		t.Errorf("supervisor identity = (%d, %d), want (%d, %d)",
 			inst.SupervisorPID, inst.SupervisorStart, h.spawn.pid, h.spawn.start)
 	}
+}
+
+// --persist hands the supervisor the flag and records, before anything boots,
+// that this project's VM is the image itself. GC reads that record; getting it
+// wrong here is how the user's image gets deleted.
+func TestRunPersistNamesTheImageAsTheVM(t *testing.T) {
+	h := newHarness(t)
+	h.persist = true
+
+	if _, err := h.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	calls := h.spawn.recorded()
+	if len(calls) != 1 {
+		t.Fatalf("spawned %d supervisors, want 1", len(calls))
+	}
+	p := h.parseParams(calls[0])
+	if !p.Persist {
+		t.Error("the supervisor was not told to persist")
+	}
+	if !state.InstanceNamePattern.MatchString(p.InstanceName) {
+		t.Errorf("instance name %q is no longer collectable by GC", p.InstanceName)
+	}
+
+	inst := h.instance()
+	if inst == nil {
+		t.Fatal("no instance record after a successful create")
+	}
+	if !inst.Persist {
+		t.Error("the record does not say the instance is persistent")
+	}
+	if inst.VM() != baseImage {
+		t.Errorf("record's VM = %q, want the image %q", inst.VM(), baseImage)
+	}
+	if got := h.err.String(); !strings.Contains(got, persistOnNote) {
+		t.Errorf("output = %q, want the persistence note", got)
+	}
+}
+
+// Without the flag the record must stay ordinary: the VM is a clone named after
+// the instance, and teardown may delete it.
+func TestRunWithoutPersistKeepsTheCloneNaming(t *testing.T) {
+	h := newHarness(t)
+
+	if _, err := h.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	inst := h.instance()
+	if inst.Persist {
+		t.Error("an ordinary run produced a persistent record")
+	}
+	if inst.VM() != inst.InstanceName {
+		t.Errorf("record's VM = %q, want the clone %q", inst.VM(), inst.InstanceName)
+	}
+	if strings.Contains(h.err.String(), persistOnNote) {
+		t.Errorf("printed the persistence note for a throwaway clone: %q", h.err.String())
+	}
+}
+
+// Ephemerality is fixed when the VM boots. A later --persist cannot change it,
+// so the shell says which kind of VM it actually got.
+func TestRunPersistOnAnExistingEphemeralInstanceSaysSo(t *testing.T) {
+	h := newHarness(t)
+	h.runningInstance(h.hash)
+	h.persist = true
+
+	if _, err := h.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if calls := h.spawn.recorded(); len(calls) != 0 {
+		t.Fatalf("spawned %d supervisors, want none", len(calls))
+	}
+	got := h.err.String()
+	if !strings.Contains(got, persistLateNote) {
+		t.Errorf("output = %q, want the note explaining that --persist came too late", got)
+	}
+	if strings.Contains(got, persistOnNote) {
+		t.Errorf("output = %q claims the VM is persistent when it is not", got)
+	}
+}
+
+// The other direction is the one that costs the user something: they did not
+// ask for persistence, and are about to make changes that outlive the session.
+func TestRunOnAPersistentInstanceWarnsWithoutTheFlag(t *testing.T) {
+	h := newHarness(t)
+	inst := h.runningInstance(h.hash)
+	inst.VMName, inst.Persist = baseImage, true
+	h.writeInstance(inst)
+
+	if _, err := h.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := h.err.String(); !strings.Contains(got, persistOnNote) {
+		t.Errorf("output = %q, want the persistence note", got)
+	}
+}
+
+// The preflight exists so that these three end at a terminal rather than in a
+// log file, each with the command that fixes them.
+func TestPersistPreflightRefusals(t *testing.T) {
+	t.Run("no such vm", func(t *testing.T) {
+		h := newHarness(t)
+		h.persist = true
+		h.vms = tart.NewFake() // tart knows nothing by that name
+
+		_, err := h.run()
+		if err == nil {
+			t.Fatal("run accepted --persist for a VM that does not exist")
+		}
+		if !strings.Contains(err.Error(), "no local VM by that name") {
+			t.Errorf("error = %v, want it to name the missing VM", err)
+		}
+		if calls := h.spawn.recorded(); len(calls) != 0 {
+			t.Errorf("spawned %d supervisors despite the refusal", len(calls))
+		}
+		if h.instance() != nil {
+			t.Error("a refused --persist left a claim behind; the next shell would wait it out")
+		}
+	})
+
+	t.Run("cached remote image", func(t *testing.T) {
+		// sourceOf makes anything registry-shaped an OCI image in the fake, as
+		// tart list would report it.
+		const remote = "ghcr.io/acme/tahoe:latest"
+		h := newBareHarness(t, "version: 1\nimage: "+remote+"\n")
+		h.allow(h.hash)
+		h.persist = true
+		h.vms = tart.NewFake(remote)
+
+		_, err := h.run()
+		if err == nil {
+			t.Fatal("run accepted --persist for a cached remote image")
+		}
+		if !strings.Contains(err.Error(), "cached remote image") {
+			t.Errorf("error = %v, want it to explain that the changes would be lost", err)
+		}
+	})
+
+	t.Run("already running", func(t *testing.T) {
+		h := newHarness(t)
+		h.persist = true
+		if _, err := h.vms.Run(context.Background(), baseImage, tart.RunOpts{}); err != nil {
+			t.Fatalf("start the image outside pt: %v", err)
+		}
+
+		_, err := h.run()
+		if err == nil {
+			t.Fatal("run accepted --persist for an image already running elsewhere")
+		}
+		if !strings.Contains(err.Error(), "already running") {
+			t.Errorf("error = %v, want it to say the image is taken", err)
+		}
+	})
 }
 
 // A second pt shell for a live instance shares it. Spawning a second supervisor

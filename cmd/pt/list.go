@@ -18,9 +18,13 @@ import (
 // documented interface; renaming one is a breaking change for anything parsing
 // --json output.
 type listRow struct {
-	Project       string  `json:"project"`
-	VM            string  `json:"vm"`
-	State         string  `json:"state"`
+	Project string `json:"project"`
+	VM      string `json:"vm"`
+	State   string `json:"state"`
+
+	// Persist distinguishes a VM pt will destroy from the user's own image,
+	// booted in place by pt shell --persist and left behind afterwards.
+	Persist       bool    `json:"persist"`
 	Sessions      int     `json:"sessions"`
 	CPUPercent    float64 `json:"cpuPercent"`
 	MemBytes      uint64  `json:"memBytes"`
@@ -62,10 +66,10 @@ func runList(e *env, out io.Writer, jsonOut bool) error {
 	}
 
 	tw := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(tw, "PROJECT\tVM\tSTATE\tSESSIONS\tCPU %\tMEM\tDISK*\tUPTIME")
+	fmt.Fprintln(tw, "PROJECT\tVM\tMODE\tSTATE\tSESSIONS\tCPU %\tMEM\tDISK*\tUPTIME")
 	for _, r := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%.1f\t%s\t%s\t%s\n",
-			r.Project, r.VM, r.State, r.Sessions,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%.1f\t%s\t%s\t%s\n",
+			r.Project, r.VM, vmMode(r.Persist), r.State, r.Sessions,
 			r.CPUPercent, humanBytes(r.MemBytes), humanBytes(r.DiskBytes),
 			humanDuration(time.Duration(r.UptimeSeconds)*time.Second))
 	}
@@ -76,6 +80,15 @@ func runList(e *env, out io.Writer, jsonOut bool) error {
 	// image, and du charges shared blocks to whichever path it walks first.
 	fmt.Fprintln(out, "\n* approximate: CoW clones share blocks with the source image.")
 	return nil
+}
+
+// vmMode names what happens to a VM when its last shell exits, which is the
+// distinction the rest of the row cannot show.
+func vmMode(persist bool) string {
+	if persist {
+		return "persist"
+	}
+	return "clone"
 }
 
 func collectListRows(e *env) ([]listRow, error) {
@@ -92,10 +105,14 @@ func collectListRows(e *env) ([]listRow, error) {
 			continue
 		}
 
+		// The VM column names what tart is running, which for a --persist
+		// instance is the project's base image rather than a clone. Reporting
+		// the instance name there would name something that does not exist.
 		r := listRow{
 			Project: inst.ProjectPath,
-			VM:      inst.InstanceName,
+			VM:      inst.VM(),
 			State:   string(inst.State),
+			Persist: inst.Persist,
 		}
 		// The recorded state is only a claim; the supervisor's liveness is what
 		// makes it true. A record saying "running" whose supervisor is gone is
@@ -108,7 +125,7 @@ func collectListRows(e *env) ([]listRow, error) {
 			r.CPUPercent = stats.CPUPercent
 			r.MemBytes = stats.RSSBytes
 		}
-		if dir, err := state.TartVMDir(inst.InstanceName); err == nil {
+		if dir, err := state.TartVMDir(inst.VM()); err == nil {
 			if n, err := state.DiskUsageBytes(dir); err == nil {
 				r.DiskBytes = n
 			}

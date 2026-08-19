@@ -92,6 +92,20 @@ type run struct {
 
 func (r *run) logf(format string, args ...any) { r.d.Logf(format, args...) }
 
+// vmName is the name every tart call in this package uses.
+//
+// It is the clone's name for an ephemeral instance and the image's own name
+// for a persistent one. Nothing outside this method may assume the two are the
+// same: InstanceName still identifies the *instance* — it keys the state
+// record and is what garbage collection recognizes — but under --persist there
+// is no VM by that name.
+func (r *run) vmName() string {
+	if r.p.Persist {
+		return r.p.Config.Image
+	}
+	return r.p.InstanceName
+}
+
 // requestStop records why the instance is going away and wakes every watcher.
 //
 // This is the whole of teardown's concurrency control. Any number of goroutines
@@ -201,6 +215,8 @@ func (r *run) claim() error {
 				r.p.InstanceName, inst.SupervisorPID)
 		}
 		inst.InstanceName = r.p.InstanceName
+		inst.VMName = r.vmName()
+		inst.Persist = r.p.Persist
 		inst.ProjectPath = r.p.Config.ProjectPath
 		inst.ConfigHash = r.p.ConfigHash
 		inst.Ports = portMaps(r.p.Ports)
@@ -261,6 +277,8 @@ func (r *run) withInstance(mutate func(*state.Instance) error) error {
 		// thing that stops garbage collection treating a clone as an orphan.
 		inst = &state.Instance{
 			InstanceName: r.p.InstanceName,
+			VMName:       r.vmName(),
+			Persist:      r.p.Persist,
 			ProjectPath:  r.p.Config.ProjectPath,
 			ConfigHash:   r.p.ConfigHash,
 			State:        state.StateCreating,

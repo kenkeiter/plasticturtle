@@ -437,6 +437,71 @@ func TestTeardownFromTwoWatchersAtOnce(t *testing.T) {
 	}
 }
 
+// TestPersistBootsTheImageAndLeavesIt is --persist's whole contract: nothing is
+// cloned on the way in, tart is asked about the image by its own name, and the
+// image is still there — stopped, not deleted — afterwards.
+func TestPersistBootsTheImageAndLeavesIt(t *testing.T) {
+	h := newHarness(t).persist()
+	h.writeCreating()
+	h.start()
+	h.waitRunning()
+
+	if n := h.tc.n("Clone"); n != 0 {
+		t.Errorf("Clone called %d times for a --persist instance", n)
+	}
+	inst := h.instanceRecord()
+	if !inst.Persist {
+		t.Error("the record does not say the instance is persistent; GC would delete the image")
+	}
+	if inst.VMName != baseImage {
+		t.Errorf("vmName = %q, want the image %q", inst.VMName, baseImage)
+	}
+	if inst.VM() != baseImage {
+		t.Errorf("VM() = %q, want %q", inst.VM(), baseImage)
+	}
+	if inst.InstanceName != h.instance {
+		t.Errorf("instanceName = %q, want the generated name %q", inst.InstanceName, h.instance)
+	}
+
+	h.tick(ptcfg.SessionPollInterval)
+	h.clk.Advance(ptcfg.SessionEmptyDebounce)
+	if err := h.finish(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if n := h.tc.n("Delete"); n != 0 {
+		t.Fatalf("Delete called %d times: --persist destroyed the user's image", n)
+	}
+	if got := h.fake.Existing(); !reflect.DeepEqual(got, []string{baseImage}) {
+		t.Errorf("vms after teardown = %v, want the image intact", got)
+	}
+	if h.projectDirExists() {
+		t.Error("state directory survived a clean teardown of a persistent instance")
+	}
+}
+
+// TestPersistStopsGracefullyFirst matters more here than for a clone: this VM's
+// disk is the user's, and a forced stop is a power cut on a filesystem they
+// expect to still be intact tomorrow.
+func TestPersistStopsGracefullyFirst(t *testing.T) {
+	h := newHarness(t).persist()
+	h.writeCreating()
+	h.start()
+	h.waitRunning()
+
+	h.tick(ptcfg.SessionPollInterval)
+	h.clk.Advance(ptcfg.SessionEmptyDebounce)
+	if err := h.finish(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if n := h.tc.n("StopForce"); n != 0 {
+		t.Errorf("the image was force-stopped %d times during a clean teardown", n)
+	}
+	if n := h.tc.n("Stop"); n != 1 {
+		t.Errorf("Stop called %d times, want 1", n)
+	}
+}
+
 // assertForwarded proves a tunnel carries bytes end to end.
 func assertForwarded(t *testing.T, hostPort int) {
 	t.Helper()

@@ -20,6 +20,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/state"
 	"github.com/kenkeiter/plasticturtle/internal/supervisor"
 	"github.com/kenkeiter/plasticturtle/internal/sys"
+	"github.com/kenkeiter/plasticturtle/internal/tart"
 )
 
 // Exit statuses Run reports for its own failures. The remote shell's status is
@@ -44,6 +45,18 @@ const untrustedMessage = ".plasticturtle has changed (or was never allowed). Rev
 // colleague's live session to pick up an edit would be far worse than a line of
 // explanation.
 const configDriftNote = "note: config changed since this VM started; changes apply after all shells exit."
+
+// The two halves of a --persist mismatch. An instance's ephemerality is fixed
+// when it boots, so a shell that arrives with a different opinion is told which
+// kind of VM it actually got rather than being refused.
+//
+// The second note is the more important one: a user who did not ask for
+// persistence is about to make changes that outlive their session, and nothing
+// else on the way in would tell them.
+const (
+	persistLateNote = "note: this project's VM is already running as a throwaway clone; --persist applies to the next one, once every shell has exited."
+	persistOnNote   = "note: this VM was started with --persist; changes you make inside it are kept."
+)
 
 // superviseCommand is the hidden subcommand pt re-executes itself with. The
 // supervisor is this same binary, so there is nothing else to find on PATH.
@@ -151,6 +164,12 @@ func (r *runner) run(ctx context.Context) (int, error) {
 
 	if inst.ConfigHash != r.hash {
 		fmt.Fprintln(r.msg, configDriftNote)
+	}
+	switch {
+	case r.o.Persist && !inst.Persist:
+		fmt.Fprintln(r.msg, persistLateNote)
+	case inst.Persist:
+		fmt.Fprintln(r.msg, persistOnNote)
 	}
 	return r.session(ctx, inst)
 }
@@ -304,9 +323,24 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
+	// Checked here for the same reason the mounts are: the supervisor would
+	// find the same problems, but its complaint lands in a log file nobody is
+	// watching, and every one of these has a fix the user has to type.
+	if r.o.Persist {
+		if err := r.preflightPersist(ctx, resolved.Image); err != nil {
+			return false, err
+		}
+	}
+
 	name, err := state.NewInstanceName(r.projectID)
 	if err != nil {
 		return false, err
+	}
+	// The instance is always named, even when no clone will carry that name:
+	// it identifies the record, not the VM. vmName is what tart is told.
+	vmName := name
+	if r.o.Persist {
+		vmName = resolved.Image
 	}
 
 	// Claim the project BEFORE negotiating ports, not after.
@@ -317,7 +351,7 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 	// exist. The loser then discarded the answer and attached to the winner's
 	// instance anyway. Claiming first means only one shell ever reaches the
 	// prompt, and the loser returns silently.
-	claimed, err := r.claim(name, nil)
+	claimed, err := r.claim(name, vmName)
 	if err != nil || !claimed {
 		return false, err
 	}
@@ -366,6 +400,7 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 		Config:       resolved,
 		Ports:        forwards,
 		StateRoot:    r.d.Store.Root,
+		Persist:      r.o.Persist,
 	}); err != nil {
 		return release(err)
 	}
@@ -401,9 +436,45 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// claim publishes the creating record, or reports false if the project already
-// has one. Both happen in a single lock hold, which is what makes two
-// simultaneous first-runs produce one VM rather than two.
+// preflightPersist refuses a --persist boot that could only end badly, while
+// there is still a terminal to explain it on.
+//
+// All three answers are about ownership. pt may boot the user's image in place
+// and let the guest write to it, but only if it really is a VM of theirs (not a
+// cached registry image, whose next pull would silently discard the changes)
+// and only if nothing else is already running it — tart allows exactly one.
+//
+// A tart that cannot be listed is not treated as a refusal: the supervisor will
+// fail loudly enough on its own, and refusing to boot because a status command
+// hiccuped would be worse than the problem.
+func (r *runner) preflightPersist(ctx context.Context, image string) error {
+	vms, err := r.d.Tart.List(ctx)
+	if err != nil {
+		fmt.Fprintf(r.msg, "warning: could not check %s before booting it with --persist: %v\n", image, err)
+		return nil
+	}
+	for _, vm := range vms {
+		if vm.Name != image {
+			continue
+		}
+		if vm.Source == tart.SourceOCI {
+			return fmt.Errorf("shell: cannot boot %s with --persist: it is a cached remote image, "+
+				"and changes written to one are lost on the next pull.\n"+
+				"Make a local VM once, then point image: at it:\n"+
+				"    tart clone %s my-vm", image, image)
+		}
+		if vm.State == tart.StateRunning {
+			return fmt.Errorf("shell: cannot boot %s with --persist: it is already running.\n"+
+				"Only one VM can run an image at a time, so another --persist shell "+
+				"(or a plain tart run) has it; exit that one first", image)
+		}
+		return nil
+	}
+	return fmt.Errorf("shell: cannot boot %s with --persist: tart has no local VM by that name.\n"+
+		"--persist boots the image itself, so it has to be one that exists locally:\n"+
+		"    tart clone %s my-vm", image, image)
+}
+
 // recordPorts publishes the negotiated forwards onto the record this shell
 // already claimed, so pt ports can show them while the VM is still creating.
 func (r *runner) recordPorts(forwards []ports.Resolved) error {
@@ -424,7 +495,15 @@ func (r *runner) recordPorts(forwards []ports.Resolved) error {
 	return r.d.Store.WriteInstance(r.projectID, inst)
 }
 
-func (r *runner) claim(name string, forwards []ports.Resolved) (bool, error) {
+// claim publishes the creating record, or reports false if the project already
+// has one. Both happen in a single lock hold, which is what makes two
+// simultaneous first-runs produce one VM rather than two.
+//
+// vmName is what tart will be told: the clone's name normally, the base image's
+// own name under --persist. Recording it here rather than deriving it later is
+// what lets garbage collection know which VMs it may delete and which it may
+// only stop.
+func (r *runner) claim(name, vmName string) (bool, error) {
 	lk, err := r.d.Store.Lock(r.projectID)
 	if err != nil {
 		return false, err
@@ -442,11 +521,15 @@ func (r *runner) claim(name string, forwards []ports.Resolved) (bool, error) {
 	}
 	return true, r.d.Store.WriteInstance(r.projectID, &state.Instance{
 		InstanceName: name,
+		VMName:       vmName,
+		Persist:      r.o.Persist,
 		ProjectPath:  r.projectDir,
 		ConfigHash:   r.hash,
 		State:        state.StateCreating,
 		CreatedAt:    r.clk.Now(),
-		Ports:        portMaps(forwards),
+		// Empty rather than absent: the forwards are not negotiated yet, and
+		// recordPorts publishes them onto this record moments from now.
+		Ports: portMaps(nil),
 	})
 }
 
@@ -581,7 +664,7 @@ func (r *runner) session(ctx context.Context, inst *state.Instance) (int, error)
 	// poll loop lives exactly as long as the session.
 	var opts []sshx.InteractiveOption
 	if r.o.TTY != nil {
-		bn := newBanner(r.cfg.Image, r.networkOpen(), inst.InstanceName, inst.VMPID)
+		bn := newBanner(r.cfg.Image, r.networkOpen(), inst.VM(), inst.VMPID, inst.Persist)
 		pollCtx, stopPoll := context.WithCancel(ctx)
 		defer stopPoll()
 		go bn.poll(pollCtx, r.d, r.projectID)

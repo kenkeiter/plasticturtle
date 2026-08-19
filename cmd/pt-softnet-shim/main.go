@@ -66,7 +66,7 @@ func run(lg *logger) error {
 	link, err := vmnetlink.Open(vmnetlink.Config{Subnet: subnet, Isolation: true})
 	if err != nil {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("%w\nthe shim must be installed setuid-root; run `pt setup-firewall`", err)
+			return fmt.Errorf("%w\nthe shim must be installed setuid-root; run `pt setup`", err)
 		}
 		return err
 	}

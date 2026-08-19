@@ -24,6 +24,10 @@ type fakeTart struct {
 	deleted   []string
 	listErr   error
 	deleteErr error
+
+	// stopIgnored makes Stop report success while leaving the VM running, which
+	// is how a guest that refuses to shut down looks from out here.
+	stopIgnored bool
 }
 
 func newFakeTart(vms ...tart.VM) *fakeTart {
@@ -70,6 +74,9 @@ func (f *fakeTart) Stop(ctx context.Context, name string, force bool) error {
 	vm, ok := f.vms[name]
 	if !ok {
 		return tart.ErrNotFound
+	}
+	if f.stopIgnored {
+		return nil
 	}
 	if vm.State != tart.StateRunning {
 		// Real tart fails on an already-stopped VM; GC must tolerate it.
@@ -431,6 +438,58 @@ func TestGCProjectRefusesForeignInstanceName(t *testing.T) {
 	// The record is kept: it is the only thing that still explains the state.
 	if got, err := s.ReadInstance(id); err != nil || got == nil {
 		t.Fatalf("GC removed the record anyway: (%v, %v)", got, err)
+	}
+}
+
+// TestGCStopsButNeverDeletesAPersistentVM is the flip side of the safety
+// boundary: an abandoned --persist instance still has to be stopped, because
+// nothing else owns it, but the VM is the user's own image and deleting it
+// would destroy exactly what --persist promised to keep.
+func TestGCStopsButNeverDeletesAPersistentVM(t *testing.T) {
+	s := newTestStore(t)
+	id, inst := deadInstance(t, "/Users/alice/persistent", StateRunning)
+	inst.VMName, inst.Persist = "tahoe-dev", true
+	if err := s.WriteInstance(id, inst); err != nil {
+		t.Fatal(err)
+	}
+	tc := newFakeTart(localVM("tahoe-dev"))
+
+	if err := s.GC(context.Background(), tc); err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+
+	if len(tc.deleted) != 0 {
+		t.Fatalf("GC deleted a persistent VM: %v", tc.deleted)
+	}
+	if got := tc.names(); len(got) != 1 || got[0] != "tahoe-dev" {
+		t.Fatalf("VMs after GC = %v, want the image intact", got)
+	}
+	if len(tc.stopped) != 1 || tc.stopped[0] != "tahoe-dev" {
+		t.Fatalf("stopped = %v, want the abandoned VM stopped exactly once", tc.stopped)
+	}
+	if _, err := os.Stat(s.ProjectDir(id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state dir survived GC of a stopped persistent instance: %v", err)
+	}
+}
+
+// TestGCKeepsPersistentRecordWhenStopFails: while the VM is still running,
+// under nobody's supervision, the record is the only thing that says so.
+func TestGCKeepsPersistentRecordWhenStopFails(t *testing.T) {
+	s := newTestStore(t)
+	id, inst := deadInstance(t, "/Users/alice/stubborn-persist", StateRunning)
+	inst.VMName, inst.Persist = "tahoe-dev", true
+	if err := s.WriteInstance(id, inst); err != nil {
+		t.Fatal(err)
+	}
+	// stopIgnored leaves the VM running, as a guest refusing to shut down would.
+	tc := newFakeTart(localVM("tahoe-dev"))
+	tc.stopIgnored = true
+
+	if err := s.GC(context.Background(), tc); err == nil {
+		t.Fatal("GC reported success for a VM that never stopped")
+	}
+	if got, err := s.ReadInstance(id); err != nil || got == nil {
+		t.Fatalf("record dropped while its VM was still running: (%v, %v)", got, err)
 	}
 }
 

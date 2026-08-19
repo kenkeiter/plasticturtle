@@ -24,6 +24,16 @@ type Opts struct {
 	Path    string
 	Verbose bool
 
+	// Persist boots the project's base image itself instead of a throwaway
+	// clone, so that everything the guest writes is there again next time.
+	//
+	// It applies only when this shell is the one that creates the instance: an
+	// instance's ephemerality is fixed when it boots, exactly as its mounts and
+	// image are, and a second shell cannot change it under the first one's
+	// feet. Run says so when the two disagree rather than quietly obeying or
+	// quietly refusing.
+	Persist bool
+
 	In       io.Reader
 	Out      io.Writer
 	Err      io.Writer

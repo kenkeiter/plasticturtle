@@ -52,16 +52,29 @@ func (r *run) boot(ctx, vmCtx context.Context) error {
 		}
 	}()
 
-	if err := r.d.Tart.Clone(bootCtx, r.p.Config.Image, r.p.InstanceName); err != nil {
-		return fmt.Errorf("clone %s: %w", r.p.Config.Image, err)
+	name := r.vmName()
+	if r.p.Persist {
+		// Nothing is created and nothing will be destroyed: this boots the
+		// user's own image, and every write the guest makes lands in it. The
+		// shell has already confirmed the image exists locally and is not
+		// running elsewhere; those are questions with a terminal to answer on.
+		r.logf("persist: booting %s in place; changes are kept", name)
+	} else {
+		if err := r.d.Tart.Clone(bootCtx, r.p.Config.Image, name); err != nil {
+			return fmt.Errorf("clone %s: %w", r.p.Config.Image, err)
+		}
+		// From here on there is a clone on disk, so every failure path below
+		// has to go through teardown rather than simply returning.
+		r.cloned = true
+		r.logf("cloned %s from %s", name, r.p.Config.Image)
 	}
-	// From here on there is a clone on disk, so every failure path below has to
-	// go through teardown rather than simply returning.
-	r.cloned = true
-	r.logf("cloned %s from %s", r.p.InstanceName, r.p.Config.Image)
 
 	if r.p.Config.CPU != 0 || r.p.Config.Memory != 0 {
-		if err := r.d.Tart.Set(bootCtx, r.p.InstanceName, r.p.Config.CPU, r.p.Config.Memory); err != nil {
+		// Under --persist this edits the image's own settings, which outlast
+		// the session exactly as its disk does. That is the flag's bargain, and
+		// the config is the only statement anyone has made about what this VM
+		// should be given.
+		if err := r.d.Tart.Set(bootCtx, name, r.p.Config.CPU, r.p.Config.Memory); err != nil {
 			return fmt.Errorf("set resources: %w", err)
 		}
 		r.logf("resources: cpu=%d memory=%d MiB (zero means inherit)", r.p.Config.CPU, r.p.Config.Memory)
@@ -71,7 +84,7 @@ func (r *run) boot(ctx, vmCtx context.Context) error {
 	if err != nil {
 		return err
 	}
-	proc, err := r.d.Tart.Run(vmCtx, r.p.InstanceName, tart.RunOpts{
+	proc, err := r.d.Tart.Run(vmCtx, name, tart.RunOpts{
 		// Item 12 of the implementation plan: honored, not forced by the
 		// wrapper. Omitting it opens a UI window for every VM pt boots.
 		NoGraphics: true,
@@ -80,12 +93,12 @@ func (r *run) boot(ctx, vmCtx context.Context) error {
 		Env:        netEnv,
 	})
 	if err != nil {
-		return fmt.Errorf("run %s: %w", r.p.InstanceName, err)
+		return fmt.Errorf("run %s: %w", name, err)
 	}
 	r.booted = true
 	r.vmPID = proc.Pid()
 	r.watchChild(proc)
-	r.logf("started vm %s (pid %d)", r.p.InstanceName, proc.Pid())
+	r.logf("started vm %s (pid %d)", name, proc.Pid())
 
 	ip, err := r.waitForIP(bootCtx)
 	if err != nil {
@@ -144,7 +157,7 @@ func (r *run) waitForIP(ctx context.Context) (string, error) {
 		if err := r.bootInterrupted(ctx); err != nil {
 			return "", err
 		}
-		ip, err := r.d.Tart.IP(ctx, r.p.InstanceName)
+		ip, err := r.d.Tart.IP(ctx, r.vmName())
 		if err == nil && ip != "" {
 			return ip, nil
 		}

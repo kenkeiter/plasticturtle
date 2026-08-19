@@ -236,6 +236,16 @@ func newHarness(t *testing.T, forwards ...ports.Resolved) *harness {
 	return h
 }
 
+// persist switches the harness to a --persist instance: no clone is made, and
+// the VM tart is asked about is the seed image itself, so that is where the
+// fake's address has to be.
+func (h *harness) persist() *harness {
+	h.t.Helper()
+	h.params.Persist = true
+	h.fake.SetIP(baseImage, "127.0.0.1")
+	return h
+}
+
 // writeCreating does what pt shell does before spawning the supervisor.
 func (h *harness) writeCreating() {
 	h.t.Helper()

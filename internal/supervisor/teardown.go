@@ -161,13 +161,13 @@ func (r *run) tearDownOnce(parent context.Context) {
 		r.logf("marking dead: %v", err)
 	}
 
-	deleted := r.deleteClone(ctx)
+	released := r.releaseVM(ctx)
 
-	// Spec §6.3 step 6: remove the state files only if the clone really went
-	// away. A record that outlives its VM is what lets the next pt shell (or
-	// GC) find and delete it; removing the record first would orphan the clone
-	// under a name nothing remembers.
-	if deleted && r.stopKind.removesState() {
+	// Spec §6.3 step 6: remove the state files only if the VM really was
+	// released. A record that outlives its VM is what lets the next pt shell
+	// (or GC) find and finish the job; removing the record first would leave
+	// the VM under a name nothing remembers.
+	if released && r.stopKind.removesState() {
 		// The heartbeat has to stop first: state.Heartbeat recreates the
 		// project directory on its way to touching the file, so a beat landing
 		// after the removal would leave exactly the kind of half-populated
@@ -188,11 +188,15 @@ func (r *run) tearDownOnce(parent context.Context) {
 }
 
 // stopVM stops the guest gracefully and escalates if it does not go.
+//
+// The graceful stop matters more under --persist than anywhere else: this VM's
+// disk survives the session, so a forced stop is a hard power cut on a
+// filesystem the user expects to still be intact tomorrow.
 func (r *run) stopVM(ctx context.Context) {
 	if !r.booted {
 		return
 	}
-	if err := r.d.Tart.Stop(ctx, r.p.InstanceName, false); err != nil {
+	if err := r.d.Tart.Stop(ctx, r.vmName(), false); err != nil {
 		// A VM that is already gone reports a failure here; so does one that
 		// refused to shut down. Both are answered the same way.
 		r.logf("graceful stop: %v", err)
@@ -209,8 +213,35 @@ func (r *run) stopVM(ctx context.Context) {
 }
 
 func (r *run) forceStop(ctx context.Context) {
-	if err := r.d.Tart.Stop(ctx, r.p.InstanceName, true); err != nil {
+	if err := r.d.Tart.Stop(ctx, r.vmName(), true); err != nil {
 		r.logf("forced stop: %v", err)
+	}
+}
+
+// releaseVM lets go of the instance's VM and reports whether the project's
+// state files may now go too.
+//
+// The two ownership models part company here. A clone is pt's, so releasing it
+// means deleting it. A persistent VM is the user's, so releasing it means
+// nothing more than having stopped it — but that much is required, because the
+// instance record is the only thing that would tell the next pt shell, or GC,
+// that a VM is still running with nobody supervising it.
+func (r *run) releaseVM(ctx context.Context) bool {
+	if !r.p.Persist {
+		return r.deleteClone(ctx)
+	}
+	if !r.booted {
+		return true
+	}
+	select {
+	case <-r.childDone:
+		r.logf("left %s in place; its changes are kept (--persist)", r.vmName())
+		return true
+	default:
+		// Both stops have been tried and the child is still alive. Keeping the
+		// record is what gets somebody to look again.
+		r.logf("vm %s is still running after teardown; keeping the instance record", r.vmName())
+		return false
 	}
 }
 
@@ -219,14 +250,15 @@ func (r *run) deleteClone(ctx context.Context) bool {
 	if !r.cloned {
 		return false
 	}
-	err := r.d.Tart.Delete(ctx, r.p.InstanceName)
+	name := r.vmName()
+	err := r.d.Tart.Delete(ctx, name)
 	if err == nil || errors.Is(err, tart.ErrNotFound) {
-		r.logf("deleted clone %s", r.p.InstanceName)
+		r.logf("deleted clone %s", name)
 		return true
 	}
 	// Best effort by design: the instance record survives, and the next GC
 	// pass finds a dead supervisor and tries again.
-	r.logf("deleting clone %s: %v", r.p.InstanceName, err)
+	r.logf("deleting clone %s: %v", name, err)
 	return false
 }
 

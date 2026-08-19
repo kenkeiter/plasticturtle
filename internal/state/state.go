@@ -106,6 +106,18 @@ type Instance struct {
 	ConfigHash   string        `json:"configHash"`
 	State        InstanceState `json:"state"`
 
+	// VMName is the tart VM this instance actually runs, which is normally the
+	// clone named by InstanceName. A --persist instance boots the project's
+	// base image in place instead, so the two differ and only this one may be
+	// handed to tart. Empty means "the same as InstanceName", which is what
+	// every record written before --persist existed says.
+	VMName string `json:"vmName,omitempty"`
+
+	// Persist records that VMName is the user's own image rather than a clone
+	// pt made. It is the flag every destructive path checks: an image is not
+	// ours to delete, and the guest's writes to it are the point.
+	Persist bool `json:"persist,omitempty"`
+
 	// SupervisorPID and SupervisorStart together identify the supervisor
 	// process. The start time guards against PID reuse after a reboot; see
 	// Alive.
@@ -121,6 +133,19 @@ type Instance struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	Ports     []PortMap `json:"ports"`
+}
+
+// VM returns the tart VM name this record owns. Every call that reaches tart
+// goes through it, so a record written before VMName existed still names its
+// clone rather than an empty string.
+func (i *Instance) VM() string {
+	if i == nil {
+		return ""
+	}
+	if i.VMName != "" {
+		return i.VMName
+	}
+	return i.InstanceName
 }
 
 // PortMap is one live forward, reflecting any runtime remapping. Remaps live
@@ -712,8 +737,8 @@ func (s *Store) GCProject(ctx context.Context, tc tart.Client, projectID string)
 	if sessErr != nil {
 		errs = append(errs, sessErr)
 	}
-	if err := forceDeleteVM(ctx, tc, inst.InstanceName); err != nil {
-		// If the VM cannot be removed, keep the record: it is the only thing
+	if err := reclaimVM(ctx, tc, inst); err != nil {
+		// If the VM cannot be released, keep the record: it is the only thing
 		// that still names the VM, and the next GC will try again.
 		errs = append(errs, err)
 		return errors.Join(errs...)
@@ -816,8 +841,53 @@ func (s *Store) vmIsClaimed(vmName string) (bool, error) {
 		return false, nil
 	}
 	// A record naming a *different* VM means this one is a leftover from an
-	// earlier instance of the same project, and is just as orphaned.
-	return inst.InstanceName == vmName, nil
+	// earlier instance of the same project, and is just as orphaned. A
+	// --persist record names no clone at all, so it claims nothing here.
+	return inst.VM() == vmName, nil
+}
+
+// reclaimVM gives an abandoned instance's VM back, by whichever means that
+// instance's ownership allows: a clone pt made is deleted, and a --persist
+// instance's image is only stopped.
+//
+// The distinction is not a nicety. The persistent VM is the user's own image,
+// very possibly the one every other project clones from, and its whole purpose
+// is to still be there tomorrow.
+func reclaimVM(ctx context.Context, tc tart.Client, inst *Instance) error {
+	if inst.Persist {
+		return forceStopVM(ctx, tc, inst.VM())
+	}
+	return forceDeleteVM(ctx, tc, inst.VM())
+}
+
+// forceStopVM stops a VM without deleting it, and reports failure unless it
+// really is stopped.
+//
+// It is deliberately stricter than forceDeleteVM's "already gone is success":
+// this record is the only thing that still says a persistent VM is running
+// under nobody's ownership, so it may only be discarded once that has stopped
+// being true.
+func forceStopVM(ctx context.Context, tc tart.Client, name string) error {
+	if tc == nil || name == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, ptcfg.ReclaimTimeout)
+	defer cancel()
+
+	// A VM that is already stopped makes `tart stop` fail; that is the outcome
+	// we wanted, so the list below is what actually decides.
+	_ = tc.Stop(ctx, name, true)
+
+	vms, err := tc.List(ctx)
+	if err != nil {
+		return fmt.Errorf("state: list vms: %w", err)
+	}
+	for _, vm := range vms {
+		if vm.Name == name && vm.State == tart.StateRunning {
+			return fmt.Errorf("state: vm %s did not stop", name)
+		}
+	}
+	return nil
 }
 
 // forceDeleteVM stops and deletes a VM, tolerating every "it was already gone"

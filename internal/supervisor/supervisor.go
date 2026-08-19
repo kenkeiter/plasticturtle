@@ -38,6 +38,13 @@ type Params struct {
 	Config       *config.Resolved `json:"config"`
 	Ports        []ports.Resolved `json:"ports"`
 	StateRoot    string           `json:"stateRoot"`
+
+	// Persist boots Config.Image itself rather than a clone of it, so that
+	// everything the guest writes outlives the session. It changes exactly two
+	// things about this supervisor's life — nothing is cloned on the way in,
+	// and nothing is deleted on the way out — but it is the difference between
+	// owning a VM and borrowing the user's.
+	Persist bool `json:"persist,omitempty"`
 }
 
 // ParseParams decodes Params from r, validating that every required field is

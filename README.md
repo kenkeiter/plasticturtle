@@ -72,7 +72,7 @@ cp bin/pt bin/pt-softnet-shim /usr/local/bin/
 ```
 
 `pt-softnet-shim` is only needed for the [network firewall](#network-firewall);
-keep it next to `pt` (`pt setup-firewall` looks for it there). If you do not use
+keep it next to `pt` (`pt setup` looks for it there). If you do not use
 `restricted` network policies you can skip it.
 
 Pull the tested image once (first `pt shell` would otherwise pull it inline,
@@ -298,7 +298,7 @@ already trying to get work done.
 ```
 pt init  [path]              Interactive setup; writes .plasticturtle and allows it
 pt allow [path]              Show what the config grants, then trust its exact bytes
-pt shell [path]              Enter the project's VM, creating it if needed
+pt shell [path] [--persist]  Enter the project's VM, creating it if needed
 pt ports [path] [--global]   Configured forwards and their live status
 pt list                      Active instances with resource usage
 ```
@@ -328,6 +328,49 @@ it attaches anyway and prints
 
 `-v` additionally prints the instance name and the path of the supervisor log
 on the create path — the easiest way to find that log.
+
+#### `--persist`
+
+`pt shell --persist` boots the image named by `image:` **itself**, instead of a
+throwaway clone of it. Everything the guest writes — packages you install, tools
+you configure, a Homebrew prefix you spent twenty minutes on — is still there
+next time, and every ordinary `pt shell` afterwards clones from an image that
+already has it.
+
+That is the whole feature, and it is worth being clear about what it costs:
+
+- The VM is not discarded at teardown. `pt` stops it (gracefully, because that
+  disk now matters) and leaves it alone. Nothing in `pt` will ever delete it —
+  not teardown, not garbage collection.
+- Whatever the guest does to that image sticks, including whatever a compromised
+  dependency does. The sandbox stops being a sandbox for the duration.
+- `cpu:` and `memory:` are applied to the image itself, so they outlive the
+  session as its new defaults.
+- Only one VM can run an image at a time. A second project (or a stray
+  `tart run`) already running it is refused, with the name, before anything
+  boots. For the same reason, other projects that clone the same image are
+  better left until you have exited: a clone taken while the source is running
+  is at best crash-consistent.
+- The image has to be a local VM. A registry reference is refused: changes
+  written into the OCI cache are discarded by the next pull. Make one once with
+  `tart clone ghcr.io/…/macos-tahoe-base:latest tahoe-dev` and point `image:` at
+  it.
+
+Ephemerality is fixed when the VM boots, exactly like its mounts and image. So
+`--persist` applies only to the shell that creates the instance: pass it while
+one is already running and `pt` says so and attaches anyway, and a shell
+entering a persistent VM without the flag is told that its changes are being
+kept. While you are in one, the status banner reads **Persistent** rather than
+**Sandbox**, and `pt list` shows the mode in its own column.
+
+The intended workflow is to persist deliberately and briefly — set the image up,
+exit, and go back to ephemeral shells:
+
+```
+pt shell --persist   # install, configure, break things
+exit
+pt shell             # a clone of everything you just did, throwaway again
+```
 
 Exit status:
 
@@ -365,8 +408,9 @@ instance record.
 
 ```
 $ pt list
-PROJECT                       VM                            STATE    SESSIONS  CPU %  MEM     DISK*  UPTIME
-/Users/alice/code/myproject   pt-e3b5380ebc1df727-e0342b0a  running  2         38.4   2.1G    29.8G  4m12s
+PROJECT                       VM                            MODE     STATE    SESSIONS  CPU %  MEM     DISK*  UPTIME
+/Users/alice/code/myproject   pt-e3b5380ebc1df727-e0342b0a  clone    running  2         38.4   2.1G    29.8G  4m12s
+/Users/alice/code/imagework    tahoe-dev                    persist  running  1         12.0   1.4G    31.1G  22m03s
 
 * approximate: CoW clones share blocks with the source image.
 ```
@@ -374,7 +418,8 @@ PROJECT                       VM                            STATE    SESSIONS  C
 | Column | Source |
 |---|---|
 | `PROJECT` | project path from `instance.json` |
-| `VM` | clone name, `pt-<project-id>-<8 hex>` |
+| `VM` | clone name, `pt-<project-id>-<8 hex>` — or the image's own name under `--persist` |
+| `MODE` | `clone` (destroyed at teardown) or `persist` (the user's image, left alone) |
 | `STATE` | `creating`, `running`, `stopping`, `dead` — forced to `dead` if the supervisor PID is not alive, whatever the record claims |
 | `SESSIONS` | session records whose process is still alive |
 | `CPU %` / `MEM` | summed from `ps` over the supervisor's process tree |
@@ -493,7 +538,7 @@ Enforcement runs on the host, in a small shim that provides the guest's network
 itself. Install it once:
 
 ```sh
-pt setup-firewall     # copies the shim into place; sudo makes it setuid-root
+pt setup     # copies the shim into place; sudo makes it setuid-root
 ```
 
 This is required only for `restricted` projects; `open` projects are untouched
@@ -616,6 +661,15 @@ said at the moment you approved it. Guest-side compromise is *outside* the
 boundary and expected; a config change is *inside* it and must be re-approved.
 Read the summary. It is not a formality.
 
+**`--persist` suspends the disposability the rest of this rests on.** The
+ordinary guarantee is that guest-side compromise costs you the clone and nothing
+more, because the clone is destroyed minutes later. Boot the image itself and
+that stops being true: whatever the guest writes is in the image, and every
+later `pt shell` clones it forward. It is a command-line flag, not a config
+field, precisely so that a `.plasticturtle` can never ask for it — the decision
+is made by the person typing, per invocation. Use it for setup you intend, and
+go back to ephemeral shells afterwards.
+
 **Config is snapshotted at boot.** The supervisor receives the fully resolved
 config on stdin when it is spawned, and keeps it for the instance's lifetime.
 Editing and re-allowing `.plasticturtle` while a VM is running changes nothing
@@ -630,7 +684,10 @@ paths and forwarded ports.
 **Garbage collection only ever deletes VMs whose names match**
 `^pt-[0-9a-f]{16}-[0-9a-f]{8}$` and that no instance record claims. Any
 uncertainty — a busy project lock, an unreadable record — is resolved as "leave
-it alone". Your other Tart VMs are never touched.
+it alone". Your other Tart VMs are never touched, including the one a
+`--persist` instance is running: a record marked persistent takes the
+stop-but-never-delete path, and the name it carries is not one the delete path
+would accept anyway.
 
 ## State on disk
 
@@ -697,6 +754,11 @@ If the supervisor was killed (`kill -9`), the VM is orphaned but harmless: the
 next `pt shell` for that project notices the dead PID under the lock, force-stops
 and deletes the leftover clone, clears the state, and boots fresh. `pt list` and
 its GC pass do the same without booting anything.
+
+An orphaned `--persist` instance is reclaimed the same way with one difference:
+GC stops the VM and stops there. The image is yours, so nothing in `pt` deletes
+it, and the record is kept until the VM really has stopped — that record is the
+only thing that says a VM is running with nobody watching it.
 
 If a supervisor is alive but wedged, GC will not touch it by design. Stop it
 yourself, then let GC clean up:

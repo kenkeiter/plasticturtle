@@ -102,10 +102,14 @@ func newAllowCmd() *cobra.Command {
 }
 
 func newShellCmd() *cobra.Command {
-	return &cobra.Command{
+	var persist bool
+	cmd := &cobra.Command{
 		Use:   "shell [path]",
 		Short: "Enter the project's VM, creating it if needed",
-		Args:  cobra.MaximumNArgs(1),
+		Long: "Clones the project's image, boots it with the project mounted, and logs in.\n" +
+			"The clone is destroyed when the last shell exits, so nothing outside the\n" +
+			"mounts survives — which is the point, and is what --persist opts out of.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := openEnv()
 			if err != nil {
@@ -124,6 +128,7 @@ func newShellCmd() *cobra.Command {
 			opts := shell.Opts{
 				Path:     argPath(args),
 				Verbose:  global.Verbose,
+				Persist:  persist,
 				In:       os.Stdin,
 				Out:      os.Stdout,
 				Err:      os.Stderr,
@@ -147,6 +152,9 @@ func newShellCmd() *cobra.Command {
 			return err
 		},
 	}
+	cmd.Flags().BoolVar(&persist, "persist", false,
+		"boot the base image itself instead of a throwaway clone, keeping everything the guest writes")
+	return cmd
 }
 
 func newPortsCmd() *cobra.Command {
@@ -188,7 +196,7 @@ func newListCmd() *cobra.Command {
 func newSetupFirewallCmd() *cobra.Command {
 	var shim string
 	cmd := &cobra.Command{
-		Use:   "setup-firewall",
+		Use:   "setup",
 		Short: "Install the domain-firewall shim (one-time, needs sudo)",
 		Long: "Installs pt's software-networking shim and makes it setuid-root so that\n" +
 			"projects with a restricted `network:` policy can enforce their domain\n" +

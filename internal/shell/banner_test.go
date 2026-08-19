@@ -28,7 +28,7 @@ func stripEscapes(t *testing.T, s string) string {
 }
 
 func renderedStats(image string, warn bool, st bannerStats) *banner {
-	b := newBanner(image, warn, "pt-test-instance", 0)
+	b := newBanner(image, warn, "pt-test-instance", 0, false)
 	b.stats = st
 	return b
 }
@@ -128,7 +128,7 @@ func TestTruncateTail(t *testing.T) {
 }
 
 func TestBannerRightTextForms(t *testing.T) {
-	b := newBanner("img", false, "pt-test-instance", 0)
+	b := newBanner("img", false, "pt-test-instance", 0, false)
 	cases := []struct {
 		st   bannerStats
 		want string

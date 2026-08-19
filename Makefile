@@ -26,8 +26,8 @@ vet:
 .PHONY: build
 build: $(BIN) $(SHIM)
 
-# pt and its firewall shim are built together and live side by side: `pt
-# setup-firewall` installs the shim it finds next to itself.
+# pt and its firewall shim are built together and live side by side: `pt setup`
+# installs the shim it finds next to itself.
 .PHONY: $(BIN)
 $(BIN):
 	$(GO) build $(LDFLAGS) -o $(BIN) ./cmd/pt

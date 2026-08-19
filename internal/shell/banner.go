@@ -45,6 +45,7 @@ type bannerStats struct {
 type banner struct {
 	image   string // the base image the sandbox was cloned from
 	warnNet bool   // network policy is open: say so, loudly
+	persist bool   // this VM *is* the base image: say that too
 	line    *sshx.StatusLine
 
 	// usage samples the VM's host-side CPU and memory; nil means the figures
@@ -57,11 +58,11 @@ type banner struct {
 
 // newBanner takes both names because they serve different masters: image is
 // what the row displays (the instance name is a generated handle nobody
-// recognizes), while instanceName is what locates the clone's disk for the
-// usage sampler.
-func newBanner(image string, warnNet bool, instanceName string, vmPID int) *banner {
-	b := &banner{image: image, warnNet: warnNet}
-	b.usage = newUsageSampler(instanceName, vmPID).sample
+// recognizes), while vmName is what locates the VM's disk for the usage
+// sampler. Under --persist they are the same name arriving by two routes.
+func newBanner(image string, warnNet bool, vmName string, vmPID int, persist bool) *banner {
+	b := &banner{image: image, warnNet: warnNet, persist: persist}
+	b.usage = newUsageSampler(vmName, vmPID).sample
 	b.line = &sshx.StatusLine{Render: b.render}
 	return b
 }
@@ -83,11 +84,20 @@ func (b *banner) render(width int) string {
 		warn = " ⚠️ unrestricted network"
 	}
 
+	// The word carries the one fact a user cannot recover by looking around:
+	// whether what they type here survives the session. It replaces "Sandbox"
+	// rather than joining it so that the row's width behavior — and every
+	// narrowing step below — is unchanged.
+	label := "Sandbox"
+	if b.persist {
+		label = "Persistent"
+	}
+
 	// Each candidate is (plain text for width accounting, styled equivalent).
 	// The styled string must render exactly the plain one's cells.
 	left := func(name, warn string) (string, string) {
-		plain := " 🐢 Sandbox [" + name + "]" + warn + " "
-		styled := bannerWhite + " 🐢 Sandbox " + bannerGreen + "[" + name + "]" + bannerWhite + warn + " "
+		plain := " 🐢 " + label + " [" + name + "]" + warn + " "
+		styled := bannerWhite + " 🐢 " + label + " " + bannerGreen + "[" + name + "]" + bannerWhite + warn + " "
 		return plain, styled
 	}
 

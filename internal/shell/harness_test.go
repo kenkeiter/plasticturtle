@@ -128,6 +128,9 @@ type harness struct {
 	in  *bytes.Reader
 	out *safeBuffer
 	err *safeBuffer
+
+	// persist is the --persist flag every run this harness makes carries.
+	persist bool
 }
 
 // newHarness builds a trusted project with an in-process SSH guest reachable at
@@ -230,7 +233,7 @@ func (h *harness) allow(hash string) {
 }
 
 func (h *harness) opts() Opts {
-	return Opts{Path: h.dir, In: h.in, Out: h.out, Err: h.err, SelfPath: "/usr/local/bin/pt"}
+	return Opts{Path: h.dir, In: h.in, Out: h.out, Err: h.err, SelfPath: "/usr/local/bin/pt", Persist: h.persist}
 }
 
 func (h *harness) deps() Deps {
@@ -288,8 +291,16 @@ func (h *harness) await(done <-chan result) result {
 func (h *harness) supervisorBoots(call spawnCall) {
 	h.t.Helper()
 	params := h.parseParams(call)
+	// The VM name is derived the way the real supervisor's claim derives it, so
+	// that a --persist run leaves behind the record a real one would.
+	vmName := params.InstanceName
+	if params.Persist {
+		vmName = params.Config.Image
+	}
 	h.writeInstance(&state.Instance{
 		InstanceName: params.InstanceName,
+		VMName:       vmName,
+		Persist:      params.Persist,
 		ProjectPath:  params.Config.ProjectPath,
 		ConfigHash:   params.ConfigHash,
 		State:        state.StateRunning,

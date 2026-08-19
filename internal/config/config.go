@@ -688,7 +688,7 @@ func Template(c *Config, generatedAt time.Time) ([]byte, error) {
 	b.WriteString("# default-DENY and only connections to the domains below are allowed —\n")
 	b.WriteString("# tools that ignore the policy simply get no connectivity (fail closed).\n")
 	b.WriteString("# A leading *. matches any subdomain. Enforcement is host-side and needs\n")
-	b.WriteString("# the firewall shim installed once; run `pt setup-firewall` if a boot complains.\n")
+	b.WriteString("# the firewall shim installed once; run `pt setup` if a boot complains.\n")
 	if n := check.Network; n != nil && n.Policy != "" {
 		b.WriteString("network:\n")
 		b.WriteString("  policy: " + yamlScalar(string(n.Policy)) + "\n")
