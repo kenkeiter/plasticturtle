@@ -228,7 +228,7 @@ func newHarness(t *testing.T, forwards ...ports.Resolved) *harness {
 	if err != nil {
 		t.Fatalf("open trust: %v", err)
 	}
-	if err := ts.Allow(projectDir, h.params.ConfigHash, time.Now()); err != nil {
+	if err := ts.Allow(projectDir, h.params.ConfigHash, nil, time.Now()); err != nil {
 		t.Fatalf("allow: %v", err)
 	}
 	h.deps.Trust = ts

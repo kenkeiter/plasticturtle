@@ -77,7 +77,7 @@ func runInit(e *env, path string, out io.Writer, interactive bool) error {
 
 	// Trust is keyed on the exact bytes just written, at the same canonical path
 	// config.Find will produce later.
-	if err := e.Trust.Allow(dir, config.HashBytes(body), time.Now()); err != nil {
+	if err := e.Trust.Allow(dir, config.HashBytes(body), body, time.Now()); err != nil {
 		return fmt.Errorf("wrote %s but could not record trust: %w", target, err)
 	}
 

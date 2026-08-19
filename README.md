@@ -1,18 +1,27 @@
 # Plastic Turtle 🐢
 
-Plastic Turtle is an easy-to-use sandboxing tool that allows you to work with your projects in dedicated, disposable [Tart](https://tart.run) VM instances. This is useful when you want to `--dangerously-skip-permissions`.
+Plastic Turtle is a simple sandboxing tool that allows you to work with your projects in dedicated, disposable [Tart](https://tart.run) VM instances. This is useful when you want to [`--dangerously-skip-permissions`](https://code.claude.com/docs/en/permission-modes).
 
 Using Plastic Turtle (`pt`) is simple:
 
-1. **Add a `.plasticturtle` config to your project** – `cd` to your project directory and run `pt init`; you will be prompted to choose a base image and other parameters, and a `.plasticturtle` file will be created in your project directory.
-2. **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the VM (cloning and starting it, if it isn't already!) and give you a shell. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
+1. 🐢 **Add a `.plasticturtle` config to your project** – From your project directory, run `pt init`; you will be prompted to choose a base image and other parameters! A `.plasticturtle` file will be created in your project directory.
+
+2. 🌴🪏 **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will 
+share the same VM for that project.
+
+3. 🧹 **Don't worry about cleanup!** – The sand stays in the turtle. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
 
 Couple of #protips: 
 
+- If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory.
 - Run `pt list` to see everything that's running.
-- If you make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory.
 
-## What the isolation is and is not
+## Security
+
+Plastic Turtle provides two types of isolation: 
+
+1. a separate guest OS with its own kernel, filesystem, users, network stack) running within the Apple Virtualization Framework.
+2. a network firewall that may be configured to prevents processes running in Plastic Turtle from accessing domains other than those they explicitly configure.
 
 What you get:
 
@@ -226,13 +235,42 @@ $ pt allow
   ports
     VM 3000  -> host 3000  (reachable on 127.0.0.1 only)
 
+  network
+    open (unrestricted outbound)
+
 Allow it? [y/N]:
 ```
+
+Re-approval shows only what moved. The full summary is what you read the first
+time; the risk in an edit lives entirely in its delta, and reprinting the parts
+you already approved is how you stop reading them:
+
+```
+$ pt allow
+.plasticturtle in /Users/alice/code/myproject
+Changed since you allowed it 3 days ago:
+
+  ~ image             ghcr.io/cirruslabs/macos-tahoe-base:latest -> some/other:image
+  ~ mount datasets    /Users/alice/datasets  read-only -> READ-WRITE
+  + mount ssh         /Users/alice/.ssh READ-WRITE
+  - port VM 3000      host 3000
+  + allow pypi.org
+
+Allow it? [y/N]:
+```
+
+`~` is a grant whose value changed, `+` one that appeared, `-` one that is gone.
+An edit that changes no grant at all — a comment, reordering, whitespace — says
+so instead of showing an empty list, and still asks, because the bytes changed
+and trust is keyed on bytes.
 
 Mechanics:
 
 - Trust is `sha256` over the **exact bytes** of the file, stored in
   `trust.json` against the **canonical absolute path** of the project directory.
+  The approved bytes are stored alongside the hash, which is what the change
+  list above is diffed against. The hash alone decides trust; the snapshot is
+  only there so you can be shown what moved.
 - Any change to the bytes — a comment, whitespace, a new mount — invalidates it.
   `pt shell` then fails with
   `.plasticturtle has changed (or was never allowed). Review it, then run: pt allow`
@@ -245,6 +283,9 @@ Mechanics:
   reached directly.
 - `pt allow` validates first: an invalid config cannot be trusted, and you are
   not asked about something that could never work.
+- `pt allow` on a config that has not changed since you approved it says so and
+  exits `0` without prompting. Asking again for a yes you already gave, about a
+  file that is identical to the byte, is how "y" becomes a reflex.
 - Answering anything but `y`/`yes` — including EOF, i.e. a non-interactive run —
   declines and exits `1` with `Not allowed.` It does not print an error; you made
   a choice.

@@ -39,7 +39,7 @@ func BenchmarkCheckTrust(b *testing.B) {
 	if err := os.WriteFile(filepath.Join(project, config.FileName), body, 0o644); err != nil {
 		b.Fatal(err)
 	}
-	if err := e.Trust.Allow(project, config.HashBytes(body), time.Now()); err != nil {
+	if err := e.Trust.Allow(project, config.HashBytes(body), body, time.Now()); err != nil {
 		b.Fatal(err)
 	}
 

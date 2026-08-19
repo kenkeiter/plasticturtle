@@ -54,7 +54,7 @@ func TestBootRefusesAConfigAllowedAtAnotherHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := other.Allow(h.projectDir, "sha256:"+strings.Repeat("b", 64), time.Now()); err != nil {
+	if err := other.Allow(h.projectDir, "sha256:"+strings.Repeat("b", 64), nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	h.deps.Trust = other

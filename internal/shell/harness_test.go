@@ -224,7 +224,7 @@ func usePort(t *testing.T, addr string) {
 
 func (h *harness) allow(hash string) {
 	h.t.Helper()
-	if err := h.trust.Allow(h.dir, hash, time.Now()); err != nil {
+	if err := h.trust.Allow(h.dir, hash, nil, time.Now()); err != nil {
 		h.t.Fatalf("allow: %v", err)
 	}
 }

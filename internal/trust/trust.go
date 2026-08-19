@@ -6,6 +6,8 @@
 package trust
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,13 @@ type Record struct {
 	Hash string `json:"hash"`
 	// AllowedAt is when the user approved it.
 	AllowedAt time.Time `json:"allowedAt"`
+	// Raw is the exact bytes the user approved, kept so that a later pt allow
+	// can show what changed rather than re-reading a summary the user has
+	// already read. It is advisory, never authoritative: Hash alone decides
+	// trust, and Raw is absent for records written by older versions or for
+	// files too large to be worth snapshotting. Callers must handle nil by
+	// falling back to showing everything.
+	Raw []byte `json:"raw,omitempty"`
 }
 
 // Store is the trust database. It is keyed by canonical absolute project path;
@@ -44,7 +53,12 @@ type Store interface {
 	// a sidecar file, so concurrent pt allow runs cannot lose each other's
 	// entries. The lock is deliberately not on the database itself; see
 	// lockSuffix for why locking an inode that rename replaces is unsound.
-	Allow(projectPath, hash string, now time.Time) error
+	//
+	// raw is the file contents hash was computed from, snapshotted into the
+	// record so a later pt allow can diff against what was approved. It may be
+	// nil, but if it is not, it must hash to hash — a snapshot that disagrees
+	// with the hash would make the next diff describe a grant nobody approved.
+	Allow(projectPath, hash string, raw []byte, now time.Time) error
 }
 
 const (
@@ -54,6 +68,14 @@ const (
 	dirPerm fs.FileMode = 0o700
 	// filePerm matches: readable for `pt _check-trust`, writable only by owner.
 	filePerm fs.FileMode = 0o600
+
+	// maxSnapshot caps the config bytes stored in a record. A .plasticturtle is
+	// a few hundred bytes; anything past this is not a config anyone reads, and
+	// copying it into the trust database would bloat the one file every shell
+	// prompt reads. Oversized files are simply not snapshotted — the next pt
+	// allow shows the full summary instead of a diff, which is only a
+	// presentation downgrade.
+	maxSnapshot = 64 << 10
 
 	// lockSuffix names a sidecar lock file rather than locking trust.json
 	// itself. Allow replaces trust.json by rename, which swaps the inode; a
@@ -119,13 +141,22 @@ func (s *fileStore) Check(projectPath, hash string) (bool, error) {
 	return rec.Hash == hash, nil
 }
 
-func (s *fileStore) Allow(projectPath, hash string, now time.Time) error {
+func (s *fileStore) Allow(projectPath, hash string, raw []byte, now time.Time) error {
 	key, err := canonicalKey(projectPath)
 	if err != nil {
 		return err
 	}
 	if hash == "" {
 		return errors.New("trust: empty hash")
+	}
+	// A snapshot that does not hash to the approved hash is worse than no
+	// snapshot: the next pt allow would diff against bytes the user never
+	// approved and could report "nothing changed" about a config that did.
+	if len(raw) > 0 && hashBytes(raw) != hash {
+		return errors.New("trust: config snapshot does not match its hash")
+	}
+	if len(raw) > maxSnapshot {
+		raw = nil
 	}
 
 	lock := flock.New(s.lockPath)
@@ -141,8 +172,17 @@ func (s *fileStore) Allow(projectPath, hash string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	db[key] = Record{Hash: hash, AllowedAt: now.UTC()}
+	db[key] = Record{Hash: hash, AllowedAt: now.UTC(), Raw: raw}
 	return s.save(db)
+}
+
+// hashBytes mirrors config.HashBytes. It is duplicated rather than imported to
+// keep this package free of the config parser: trust is the security choke
+// point and is meant to stay auditable on its own. TestHashBytesMatchesConfig
+// pins the two together.
+func hashBytes(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // load reads the database. A missing file is an empty database, but a file that

@@ -173,10 +173,19 @@ Global flags: `--json` (machine-readable output for `list`/`ports`), `-v/--verbo
 
 1. Read `.plasticturtle`, run full validation (§3.1). Print validation errors and exit
    non-zero on failure — invalid configs cannot be trusted.
-2. Print a human-readable summary of what is being trusted (image, resource overrides,
-   every mount with mode, every port), and require a `y/N` confirmation. This is the
+2. If the file is byte-identical to what is already allowed, say so and exit `0` without
+   prompting. There is nothing to approve, and re-prompting trains the reflex this whole
+   command depends on not existing.
+3. Otherwise print what is being trusted and require a `y/N` confirmation. This is the
    security choke point; make the user actually see what the file does.
-3. Store `{canonicalProjectPath: {hash, allowedAt}}` in `trust.json` (see §5).
+   - First approval, or a record with no snapshot (§5): the full summary — image, resource
+     overrides, every mount with mode, every port, the network policy and its allowlist.
+   - Re-approval with a snapshot available: only the grants that changed, as `+` added,
+     `-` removed, `~` value changed. The full summary was read at the first approval; the
+     risk of a re-approval is its delta, which a reprinted wall of approved text buries.
+   - An edit that changes no grant (comments, ordering, whitespace) says so explicitly and
+     still prompts, since trust is keyed on bytes.
+4. Store `{canonicalProjectPath: {hash, allowedAt, raw}}` in `trust.json` (see §5).
 
 ### 4.3 `pt shell`
 
@@ -220,11 +229,18 @@ For each live instance:
 {
   "/Users/alice/code/myproj": {
     "hash": "sha256:ab12...",
-    "allowedAt": "2026-08-18T08:59:00Z"
+    "allowedAt": "2026-08-18T08:59:00Z",
+    "raw": "<base64 of the approved file>"
   }
 }
 ```
 
+- `raw` is a snapshot of the bytes that were approved, kept so `pt allow` can show what
+  changed rather than what the file says (§4.2). It is advisory and never authoritative:
+  `hash` alone decides trust. It is omitted for records written before this field existed
+  and for files above the snapshot cap, and every consumer must handle its absence by
+  falling back to the full summary. A snapshot that does not hash to `hash` is rejected at
+  write time — diffing against bytes nobody approved would be worse than not diffing.
 - `pt shell` (and any config load) recomputes the hash and compares. Mismatch or absence →
   hard error: `".plasticturtle has changed (or was never allowed). Review it, then run: pt allow"`.
 - Trust is keyed by *path*, so moving a project requires re-allowing (acceptable; cheap).

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kenkeiter/plasticturtle/internal/config"
 )
 
 const (
@@ -73,7 +75,7 @@ func TestMissingDatabaseIsNotTrustedAndNotAnError(t *testing.T) {
 	if found {
 		t.Errorf("Get found = true, want false (rec=%+v)", rec)
 	}
-	if rec != (Record{}) {
+	if rec.Hash != "" || !rec.AllowedAt.IsZero() || rec.Raw != nil {
 		t.Errorf("Get rec = %+v, want zero", rec)
 	}
 }
@@ -82,7 +84,7 @@ func TestAllowThenCheck(t *testing.T) {
 	s, dbPath := newStore(t)
 	now := time.Date(2026, 8, 18, 8, 59, 0, 0, time.UTC)
 
-	if err := s.Allow("/Users/alice/proj", hashA, now); err != nil {
+	if err := s.Allow("/Users/alice/proj", hashA, nil, now); err != nil {
 		t.Fatalf("Allow: %v", err)
 	}
 
@@ -137,10 +139,10 @@ func TestAllowReplacesExistingEntry(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(48 * time.Hour)
 
-	if err := s.Allow("/Users/alice/proj", hashA, t0); err != nil {
+	if err := s.Allow("/Users/alice/proj", hashA, nil, t0); err != nil {
 		t.Fatalf("Allow #1: %v", err)
 	}
-	if err := s.Allow("/Users/alice/proj", hashB, t1); err != nil {
+	if err := s.Allow("/Users/alice/proj", hashB, nil, t1); err != nil {
 		t.Fatalf("Allow #2: %v", err)
 	}
 
@@ -171,7 +173,7 @@ func TestAllowReplacesExistingEntry(t *testing.T) {
 func TestKeysAreCleanedAbsolutePaths(t *testing.T) {
 	s, dbPath := newStore(t)
 
-	if err := s.Allow("/Users/alice/../alice/proj/", hashA, time.Now()); err != nil {
+	if err := s.Allow("/Users/alice/../alice/proj/", hashA, nil, time.Now()); err != nil {
 		t.Fatalf("Allow: %v", err)
 	}
 	db := readDB(t, dbPath)
@@ -203,7 +205,7 @@ func TestRelativeAndEmptyInputsRejected(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := s.Allow(tc.path, hashA, now); err == nil {
+			if err := s.Allow(tc.path, hashA, nil, now); err == nil {
 				t.Error("Allow accepted a non-canonical path")
 			}
 			if _, _, err := s.Get(tc.path); err == nil {
@@ -219,14 +221,14 @@ func TestRelativeAndEmptyInputsRejected(t *testing.T) {
 	if _, err := s.Check("/Users/alice/proj", ""); err == nil {
 		t.Error("Check accepted an empty hash")
 	}
-	if err := s.Allow("/Users/alice/proj", "", now); err == nil {
+	if err := s.Allow("/Users/alice/proj", "", nil, now); err == nil {
 		t.Error("Allow accepted an empty hash")
 	}
 }
 
 func TestCorruptDatabaseIsAnErrorNotAnEmptyDatabase(t *testing.T) {
 	s, dbPath := newStore(t)
-	if err := s.Allow("/Users/alice/proj", hashA, time.Now()); err != nil {
+	if err := s.Allow("/Users/alice/proj", hashA, nil, time.Now()); err != nil {
 		t.Fatalf("Allow: %v", err)
 	}
 
@@ -247,7 +249,7 @@ func TestCorruptDatabaseIsAnErrorNotAnEmptyDatabase(t *testing.T) {
 	if _, _, err := s.Get("/Users/alice/proj"); err == nil {
 		t.Error("Get on a corrupt database = nil error")
 	}
-	if err := s.Allow("/Users/alice/proj", hashB, time.Now()); err == nil {
+	if err := s.Allow("/Users/alice/proj", hashB, nil, time.Now()); err == nil {
 		t.Error("Allow overwrote a corrupt database; the user should inspect it first")
 	}
 }
@@ -274,7 +276,7 @@ func TestConcurrentAllowKeepsEveryEntry(t *testing.T) {
 				return
 			}
 			<-start
-			if err := s.Allow(projectPathFor(i), hashFor(i), now); err != nil {
+			if err := s.Allow(projectPathFor(i), hashFor(i), nil, now); err != nil {
 				errs <- err
 			}
 		}()
@@ -307,7 +309,7 @@ func TestConcurrentAllowKeepsEveryEntry(t *testing.T) {
 // write that dies before the rename leaves the old contents readable.
 func TestInterruptedWriteLeavesPreviousDatabaseIntact(t *testing.T) {
 	s, dbPath := newStore(t)
-	if err := s.Allow("/Users/alice/proj", hashA, time.Now()); err != nil {
+	if err := s.Allow("/Users/alice/proj", hashA, nil, time.Now()); err != nil {
 		t.Fatalf("Allow: %v", err)
 	}
 	before, err := os.ReadFile(dbPath)
@@ -384,7 +386,7 @@ func TestLockIsASidecarNotTheDatabase(t *testing.T) {
 	if fs2.lockPath == dbPath {
 		t.Fatal("lock path == database path; the atomic rename would swap the locked inode out from under a concurrent writer")
 	}
-	if err := s.Allow("/Users/alice/proj", hashA, time.Now()); err != nil {
+	if err := s.Allow("/Users/alice/proj", hashA, nil, time.Now()); err != nil {
 		t.Fatalf("Allow: %v", err)
 	}
 	if _, err := os.Stat(fs2.lockPath); err != nil {
@@ -400,7 +402,7 @@ func TestDatabaseIsHumanReadableWithStableKeyOrder(t *testing.T) {
 	s, dbPath := newStore(t)
 	now := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)
 	for _, p := range []string{"/z/proj", "/a/proj", "/m/proj"} {
-		if err := s.Allow(p, hashA, now); err != nil {
+		if err := s.Allow(p, hashA, nil, now); err != nil {
 			t.Fatalf("Allow %s: %v", p, err)
 		}
 	}
@@ -427,7 +429,7 @@ func TestAllowStoresUTC(t *testing.T) {
 	s, dbPath := newStore(t)
 	loc := time.FixedZone("UTC-7", -7*60*60)
 	local := time.Date(2026, 8, 18, 2, 0, 0, 0, loc)
-	if err := s.Allow("/Users/alice/proj", hashA, local); err != nil {
+	if err := s.Allow("/Users/alice/proj", hashA, nil, local); err != nil {
 		t.Fatalf("Allow: %v", err)
 	}
 	raw, err := os.ReadFile(dbPath)
@@ -471,4 +473,89 @@ func dirEntries(t *testing.T, dir string) []string {
 		names = append(names, e.Name())
 	}
 	return names
+}
+
+func TestAllowRoundTripsTheApprovedBytes(t *testing.T) {
+	s, _ := newStore(t)
+	raw := []byte("version: 1\nimage: img\n")
+
+	if err := s.Allow("/Users/alice/proj", hashBytes(raw), raw, time.Now()); err != nil {
+		t.Fatalf("Allow: %v", err)
+	}
+	rec, found, err := s.Get("/Users/alice/proj")
+	if err != nil || !found {
+		t.Fatalf("Get = (%+v, %v, %v), want found", rec, found, err)
+	}
+	if string(rec.Raw) != string(raw) {
+		// Byte-exact matters: the snapshot is diffed against a later file, and
+		// a re-serialized approximation would report edits nobody made.
+		t.Errorf("Raw = %q, want %q", rec.Raw, raw)
+	}
+}
+
+func TestAllowRejectsASnapshotThatDoesNotMatchItsHash(t *testing.T) {
+	s, _ := newStore(t)
+
+	// The whole value of the snapshot is that it is the bytes the hash
+	// approved. Storing a mismatched pair would let the next pt allow diff
+	// against something the user never saw and report "nothing changed".
+	if err := s.Allow("/Users/alice/proj", hashA, []byte("image: img\n"), time.Now()); err == nil {
+		t.Fatal("Allow accepted a snapshot that does not hash to the approved hash")
+	}
+	if _, found, _ := s.Get("/Users/alice/proj"); found {
+		t.Error("a rejected Allow still wrote a record")
+	}
+}
+
+func TestAllowDropsAnOversizeSnapshot(t *testing.T) {
+	s, _ := newStore(t)
+	raw := []byte(strings.Repeat("# padding\n", maxSnapshot/10+1))
+
+	// Trust must still be recorded; only the diff-time convenience is dropped.
+	if err := s.Allow("/Users/alice/proj", hashBytes(raw), raw, time.Now()); err != nil {
+		t.Fatalf("Allow: %v", err)
+	}
+	rec, found, err := s.Get("/Users/alice/proj")
+	if err != nil || !found {
+		t.Fatalf("Get = (%+v, %v, %v), want found", rec, found, err)
+	}
+	if rec.Hash != hashBytes(raw) {
+		t.Errorf("Hash = %q, want the approved hash", rec.Hash)
+	}
+	if rec.Raw != nil {
+		t.Errorf("Raw is %d bytes, want it dropped above the %d-byte cap", len(rec.Raw), maxSnapshot)
+	}
+}
+
+func TestRecordsWithoutASnapshotStillLoad(t *testing.T) {
+	s, dbPath := newStore(t)
+
+	// A database written by a pt that predates snapshots. It must keep working:
+	// the omitted field is optional, not a corrupt record.
+	body := `{"/Users/alice/proj":{"hash":"` + hashA + `","allowedAt":"2026-08-18T08:59:00Z"}}`
+	if err := os.WriteFile(dbPath, []byte(body), filePerm); err != nil {
+		t.Fatal(err)
+	}
+	rec, found, err := s.Get("/Users/alice/proj")
+	if err != nil || !found {
+		t.Fatalf("Get = (%+v, %v, %v), want found", rec, found, err)
+	}
+	if rec.Raw != nil {
+		t.Errorf("Raw = %q, want nil", rec.Raw)
+	}
+	ok, err := s.Check("/Users/alice/proj", hashA)
+	if err != nil || !ok {
+		t.Errorf("Check = (%v, %v), want true; a snapshot-less record still grants trust", ok, err)
+	}
+}
+
+func TestHashBytesMatchesConfig(t *testing.T) {
+	// hashBytes is duplicated here so this package does not depend on the
+	// config parser. That is only safe while the two agree exactly: a record
+	// written with one and checked with the other would silently never match.
+	for _, raw := range [][]byte{nil, []byte(""), []byte("version: 1\nimage: img\n")} {
+		if got, want := hashBytes(raw), config.HashBytes(raw); got != want {
+			t.Errorf("hashBytes(%q) = %q, config.HashBytes = %q", raw, got, want)
+		}
+	}
 }

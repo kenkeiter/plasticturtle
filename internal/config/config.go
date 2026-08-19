@@ -236,6 +236,12 @@ func Load(projectDir string) (cfg *Config, raw []byte, err error) {
 	return cfg, raw, nil
 }
 
+// Parse decodes config bytes that did not come from disk — a snapshot of a
+// previously approved file, say. It applies exactly the same strict decoding as
+// Load, so a snapshot cannot be interpreted more permissively than the file it
+// was taken from.
+func Parse(raw []byte) (*Config, error) { return decode(raw) }
+
 // decode strict-parses config bytes. KnownFields(true) turns a typo in a
 // security-relevant key ("mount:", "hostport:") into an error instead of a
 // silently ignored line.
@@ -549,6 +555,11 @@ func resolveNetwork(n *Network) ResolvedNetwork {
 	}
 	return out
 }
+
+// ExpandHostPath is expandHostPath for callers that need a mount's absolute
+// host path without Resolve's existence checks — describing what a config
+// grants is useful even when the directory it names is missing.
+func ExpandHostPath(p, projectDir string) (string, error) { return expandHostPath(p, projectDir) }
 
 // expandHostPath turns a config-authored path into an absolute one: ~ is the
 // invoking user's home, and anything relative is relative to the project, not
