@@ -149,7 +149,7 @@ Deliverable: everything in §2, compiling, `go.mod` tidied with the spec's libra
 | Agent | Scope |
 |---|---|
 | **I** | `cmd/pt`: wire every subcommand, `--json` for `list`/`ports`, `-v/--verbose`, exit codes (incl. `_check-trust`'s 0/10/1); `pt init` interactive flow with the `huh` image picker fed by `tart list --format json` + free-text OCI entry, port prompts, commented-YAML emission, auto-allow; `pt list` column assembly (`ps` for CPU/RSS over the `tart run` tree, `du -sk`, uptime). |
-| **J** | `internal/zshplugin`: `pt.plugin.zsh` (`chpwd` + `precmd`, bounded upward walk, no-op if `pt` absent, `PT_PROMPT` prefix, green/yellow), embedded and printed by `pt zsh-hook`. Must include a measured note that `pt _check-trust` stays under 10 ms — benchmark it. |
+| **J** | `internal/zshplugin`: `pt.plugin.zsh` (`chpwd`, bounded upward walk, no-op if `pt` absent, yellow warning when untrusted), embedded and printed by `pt zsh-hook`. Must include a measured note that `pt _check-trust` stays under 10 ms — benchmark it. |
 
 ### Wave 4 — hardening (2 agents, parallel)
 

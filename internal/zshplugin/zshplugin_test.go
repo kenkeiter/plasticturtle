@@ -19,7 +19,6 @@ func TestScriptIsEmbedded(t *testing.T) {
 	for _, want := range []string{
 		"command -v pt",                   // silent no-op when pt is absent
 		"add-zsh-hook",                    // must not clobber the user's hook arrays
-		"PT_PROMPT",                       // the exported prompt segment
 		"_check-trust",                    // the trust probe
 		"is not allowed (new or changed)", // the exact warning text
 	} {
@@ -133,50 +132,44 @@ func (h harness) run(t *testing.T, body string) string {
 	return string(out)
 }
 
-func TestUntrustedProjectWarnsAndMarksPromptYellow(t *testing.T) {
+func TestUntrustedProjectWarns(t *testing.T) {
 	h := newHarness(t, ExitUntrusted)
-	out := h.run(t, `cd proj; print -r -- "PROMPT_SEGMENT=$PT_PROMPT"`)
+	out := h.run(t, `cd proj`)
 
 	if !strings.Contains(out, "is not allowed (new or changed)") {
 		t.Errorf("no warning for an untrusted project:\n%s", out)
 	}
-	if !strings.Contains(out, "PROMPT_SEGMENT=") || !strings.Contains(out, "yellow") {
-		t.Errorf("prompt segment is not yellow for an untrusted project:\n%s", out)
-	}
 }
 
-func TestTrustedProjectIsSilentAndMarksPromptGreen(t *testing.T) {
+func TestTrustedProjectIsSilent(t *testing.T) {
 	h := newHarness(t, ExitTrusted)
-	out := h.run(t, `cd proj; print -r -- "PROMPT_SEGMENT=$PT_PROMPT"`)
+	out := h.run(t, `cd proj; print -r -- DONE`)
 
-	if strings.Contains(out, "is not allowed") {
-		t.Errorf("warned about a trusted project:\n%s", out)
-	}
-	if !strings.Contains(out, "green") {
-		t.Errorf("prompt segment is not green for a trusted project:\n%s", out)
+	if got := strings.TrimSpace(out); got != "DONE" {
+		t.Errorf("entering a trusted project produced output %q, want silence", got)
 	}
 }
 
-func TestCheckFailureShowsNoSegment(t *testing.T) {
+func TestCheckFailureIsSilent(t *testing.T) {
 	// pt failed for a reason of its own; claiming either trust state would be a
 	// lie, so the plugin must claim neither.
 	h := newHarness(t, ExitError)
-	out := h.run(t, `cd proj; print -r -- "SEGMENT=[$PT_PROMPT]"`)
+	out := h.run(t, `cd proj; print -r -- "TRUST=[$_PT_TRUST]"`)
 
-	if !strings.Contains(out, "SEGMENT=[]") {
-		t.Errorf("expected an empty segment when the check errors:\n%s", out)
+	if !strings.Contains(out, "TRUST=[error]") {
+		t.Errorf("expected the error state when the check errors:\n%s", out)
 	}
 	if strings.Contains(out, "is not allowed") {
 		t.Errorf("warned on an error exit, which is not an untrusted verdict:\n%s", out)
 	}
 }
 
-func TestLeavingProjectClearsSegment(t *testing.T) {
+func TestLeavingProjectClearsState(t *testing.T) {
 	h := newHarness(t, ExitTrusted)
-	out := h.run(t, `cd proj; cd ..; print -r -- "SEGMENT=[$PT_PROMPT]"`)
+	out := h.run(t, `cd proj; cd ..; print -r -- "TRUST=[$_PT_TRUST]"`)
 
-	if !strings.Contains(out, "SEGMENT=[]") {
-		t.Errorf("segment survived leaving the project:\n%s", out)
+	if !strings.Contains(out, "TRUST=[]") {
+		t.Errorf("trust state survived leaving the project:\n%s", out)
 	}
 }
 
@@ -186,24 +179,10 @@ func TestDoubleSourcingDoesNotDoubleRegister(t *testing.T) {
 	// case, not a pathological one.
 	out := h.run(t, `source `+h.plugin+`
 cd proj
-print -r -- "CHPWD=${#chpwd_functions} PRECMD=${#precmd_functions}"`)
+print -r -- "CHPWD=${#chpwd_functions}"`)
 
-	if !strings.Contains(out, "CHPWD=1") || !strings.Contains(out, "PRECMD=1") {
-		t.Errorf("double-sourcing registered the hooks more than once:\n%s", out)
-	}
-}
-
-func TestPromptPrefixIsNotDuplicatedAcrossRenders(t *testing.T) {
-	h := newHarness(t, ExitTrusted)
-	// _pt_precmd runs before every prompt; the segment must appear once no
-	// matter how many times it has run.
-	out := h.run(t, `cd proj
-PROMPT='$ '
-_pt_precmd; _pt_precmd; _pt_precmd
-print -r -- "PROMPT=[$PROMPT]"`)
-
-	if n := strings.Count(out, "🐢"); n != 1 {
-		t.Errorf("turtle appears %d times in PROMPT after three renders, want 1:\n%s", n, out)
+	if !strings.Contains(out, "CHPWD=1") {
+		t.Errorf("double-sourcing registered the hook more than once:\n%s", out)
 	}
 }
 
@@ -244,8 +223,8 @@ func TestWalkStopsAtHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := h.run(t, `print -r -- "SEGMENT=[$PT_PROMPT]"`)
-	if !strings.Contains(out, "SEGMENT=[]") {
+	out := h.run(t, `print -r -- "TRUST=[$_PT_TRUST]"`)
+	if !strings.Contains(out, "TRUST=[]") {
 		t.Errorf("walk escaped $HOME and found a config above it:\n%s", out)
 	}
 }

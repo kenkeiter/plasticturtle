@@ -88,18 +88,15 @@ Then add the zsh integration to `~/.zshrc`:
 source <(pt zsh-hook)
 ```
 
-The plugin is small and deliberately unobtrusive. It installs a `chpwd` hook and
-a `precmd` hook that:
+The plugin is small and deliberately unobtrusive. It installs a `chpwd` hook
+that:
 
-- walk upward from `$PWD` for a `.plasticturtle`, stopping at `$HOME` or `/`;
-- run `pt _check-trust <dir>` when one is found (exit `0` trusted, `10`
+- walks upward from `$PWD` for a `.plasticturtle`, stopping at `$HOME` or `/`;
+- runs `pt _check-trust <dir>` when one is found (exit `0` trusted, `10`
   new/changed, `1` error);
-- print a one-line yellow warning on `10`, once per directory change, not once
+- prints a one-line yellow warning on `10`, once per directory change, not once
   per prompt;
-- prefix `PROMPT` with a turtle — green when trusted, yellow when not — by
-  exporting `PT_PROMPT` and prepending it, stripping its own previous prefix
-  first so prompt frameworks that rewrite `PROMPT` are not fought;
-- preserve `$?` across both hooks, tolerate `errexit`, and `return 0` silently
+- preserves `$?` across the hook, tolerates `errexit`, and `return 0` silently
   if `pt` is not on `PATH` or the plugin is sourced twice.
 
 ## Quick start

@@ -4,12 +4,11 @@
 #
 #     source <(pt zsh-hook)
 #
-# It warns when a project's .plasticturtle is not allowed, and marks the prompt
-# while you are inside a Plastic Turtle project.
+# It warns when a project's .plasticturtle is not allowed.
 #
 # Three constraints shape everything below. This runs on every directory
 # change, so it must never be noticeable. It lands in other people's shells, so
-# it must not fight their prompt framework, leak names, or disturb $?. And it
+# it must not leak names or disturb $?. And it
 # must survive options the user may have set — notably errexit, under which a
 # bare non-zero exit anywhere here would kill the shell.
 
@@ -19,8 +18,8 @@ if ! command -v pt >/dev/null 2>&1; then
   return 0
 fi
 
-# Sourcing twice must not double-register hooks or double-prefix the prompt.
-# Prompt frameworks re-source their fragments, so this is not hypothetical.
+# Sourcing twice must not double-register hooks. Prompt frameworks re-source
+# their fragments, so this is not hypothetical.
 if (( ${+_PT_PLUGIN_LOADED} )); then
   return 0
 fi
@@ -28,12 +27,8 @@ typeset -g _PT_PLUGIN_LOADED=1
 
 autoload -Uz add-zsh-hook
 
-# PT_PROMPT is the prompt segment, exported so nested tooling can see it.
-# _PT_* are internal.
-typeset -gx PT_PROMPT=''
 typeset -g _PT_PROJECT_DIR=''
 typeset -g _PT_TRUST=''
-typeset -g _PT_APPLIED=''
 
 # Exit codes from `pt _check-trust`, mirroring internal/zshplugin's constants.
 typeset -gr _PT_EXIT_TRUSTED=0
@@ -85,7 +80,6 @@ _pt_chpwd() {
   if ! dir=$(_pt_find_project); then
     _PT_PROJECT_DIR=''
     _PT_TRUST=''
-    PT_PROMPT=''
     return $last
   fi
 
@@ -106,46 +100,22 @@ _pt_chpwd() {
   case $code in
     $_PT_EXIT_TRUSTED)
       _PT_TRUST=trusted
-      PT_PROMPT='%F{green}🐢 %f'
       ;;
     $_PT_EXIT_UNTRUSTED)
       _PT_TRUST=untrusted
-      PT_PROMPT='%F{yellow}🐢 %f'
       print -P -- "%F{yellow}⚠️  .plasticturtle is not allowed (new or changed). Run 'pt allow' before 'pt shell'.%f"
       ;;
     *)
       # pt failed for a reason of its own. Claiming either trust state would be
-      # a lie, so show nothing rather than guess.
+      # a lie, so say nothing rather than guess.
       _PT_TRUST=error
-      PT_PROMPT=''
       ;;
   esac
 
   return $last
 }
 
-# _pt_precmd only renders what _pt_chpwd decided.
-#
-# It strips the prefix it added last time before adding the current one, so a
-# framework that rewrites PROMPT between prompts is handled: our prefix simply
-# will not be there, and the strip is a no-op. This is deliberately the whole
-# extent of the integration — prefix and nothing else.
-_pt_precmd() {
-  # As above: precmd runs between the user's command and their prompt, so $?
-  # must survive us. Assignments alone would reset it to zero.
-  local last=$?
-
-  if [[ -n $_PT_APPLIED ]]; then
-    PROMPT=${PROMPT#$_PT_APPLIED}
-  fi
-  PROMPT="${PT_PROMPT}${PROMPT}"
-  _PT_APPLIED=$PT_PROMPT
-
-  return $last
-}
-
 add-zsh-hook chpwd _pt_chpwd
-add-zsh-hook precmd _pt_precmd
 
 # Decide for the directory the shell started in, not just for later cds.
 _pt_chpwd

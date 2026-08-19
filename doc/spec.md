@@ -252,19 +252,16 @@ Shipped as `pt.plugin.zsh`; `pt init`'s first-run experience (or the install doc
 the user to add `source <(pt zsh-hook)` — a hidden subcommand that prints the plugin — to
 `.zshrc`.
 
-Behavior, implemented with a `chpwd` hook plus a `precmd` prompt segment:
+Behavior, implemented with a `chpwd` hook:
 
 1. On directory change, walk upward for `.plasticturtle` (bounded at `$HOME` and `/`).
 2. If found, run `pt _check-trust <dir>` (hidden, fast, no locks: hash file + read
    `trust.json`). Exit codes: `0` trusted, `10` changed/untrusted, `1` error.
 3. If untrusted, print a yellow one-line warning:
    `⚠️  .plasticturtle is not allowed (new or changed). Run 'pt allow' before 'pt shell'.`
-4. While inside a Plastic Turtle project, prepend `🐢 ` to the prompt (green if trusted,
-   yellow if not). Implement by exporting `PT_PROMPT` and prepending it to `PROMPT`; do not
-   fight the user's prompt framework — just prefix.
-5. The hook must never block noticeably: `pt _check-trust` should complete in <10 ms and the
+4. The hook must never block noticeably: `pt _check-trust` should complete in <10 ms and the
    plugin should no-op silently if `pt` is not on `PATH`.
-6. Additionally, `pt shell` itself exports `PT_IN_VM_SESSION=1` into the SSH session's
+5. Additionally, `pt shell` itself exports `PT_IN_VM_SESSION=1` into the SSH session's
    environment where possible so nested tooling can detect it (best-effort; see §7).
 
 ---

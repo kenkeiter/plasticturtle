@@ -23,6 +23,6 @@ const (
 	ExitError = 1
 
 	// ExitUntrusted means the config is new, changed, or invalid — the plugin
-	// warns and colors the prompt segment accordingly.
+	// warns.
 	ExitUntrusted = 10
 )
