@@ -8,7 +8,7 @@ Plastic Turtle is intended to allow you to [`--dangerously-skip-permissions`](ht
 
 ## Quick Start
 
-Make sure you have the prerequisites! If you don't already have Tart installed, you're [gonna need it](https://tart.run/quick-start/)! You can grab Tart and get a macOS Tahoe base image by doing the following:
+You'll need some prerequisites! If you don't already have Tart installed, you're [gonna need it](https://tart.run/quick-start/)! You can grab Tart and get a macOS Tahoe base image by doing the following:
 
 ```sh
 $ brew install cirruslabs/cli/tart
@@ -23,11 +23,9 @@ brew install kenkeiter/tap/plasticturtle
 ```
 
 That installs the command as **`plasticturtle`**, with **`turtle`** as a shorter
-alias for it. This README uses `turtle` throughout; both are the same binary, and
-every message it prints names whichever one you invoked. If something else on
-your system already owns `turtle`, drop the alias — `plasticturtle` always works.
+alias for it. In the off chance you have a conflicting `turtle`, you can remove the alias.
 
-Once you've got it, using Plastic Turtle (`turtle`) is pretty straightforward:
+Once you've got it, using Plastic Turtle (`turtle`) with your project is pretty simple:
 
 ```sh
 cd ~/code/myproject
@@ -35,7 +33,7 @@ turtle init # set up your project's .plasticturtle
 turtle shell # clone, boot, and drop into a shell running in the VM
 ```
 
-Here's what's happening above:
+The above example does the following:
 
 1. 🐢 **Add a `.plasticturtle` config to your project** – From your project directory, run `turtle init`; you will be prompted to choose a base image and other parameters! A `.plasticturtle` file will be created in your project directory.
 
@@ -789,9 +787,9 @@ rm -rf ~/.local/state/plasticturtle/instances/<project-id>
 
 ## FAQ
 
-How can processes running in a Turtle shell know that they are running in the VM?
+> How can processes running in a Turtle shell know that they are running in the VM?
 
-> The `$PT_IN_VM_SESSION` environment variable is exported and set to `1` within shell sessions.
+The `$PT_IN_VM_SESSION` environment variable is exported and set to `1` within shell sessions.
 
 ## License
 
