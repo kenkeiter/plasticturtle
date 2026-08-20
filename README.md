@@ -29,16 +29,24 @@ your system already owns `turtle`, drop the alias — `plasticturtle` always wor
 
 Once you've got it, using Plastic Turtle (`turtle`) is pretty straightforward:
 
+```sh
+cd ~/code/myproject
+turtle init # set up your project's .plasticturtle
+turtle shell # clone, boot, and drop into a shell running in the VM
+```
+
+Here's what's happening above:
+
 1. 🐢 **Add a `.plasticturtle` config to your project** – From your project directory, run `turtle init`; you will be prompted to choose a base image and other parameters! A `.plasticturtle` file will be created in your project directory.
 
-2. 🏖️🪏 **Play in the sandbox using `turtle shell`** – Any time you are within your project directory, running `turtle shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will share the same VM for that project.
+2. 🏖️🪏 **Play in the sandbox using `turtle shell`** – Any time you are within your project directory, running `turtle shell` will give you a safe space to play in – an ephemeral VM. You can use `turtle shell` as many times as you want from the same project, and all shells will run on the same VM. Once all shells are closed (⌘+D), the VM is automatically stopped and garbage collected.
 
 3. 🧹🐢 **Don't worry about cleanup!** – The sand stays in the turtle. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
 
 Couple of #protips: 
 
 - If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `turtle allow` within your project directory. _Critically, this cannot be run from within the VM itself_ – but your project's `.plasticturtle` remains editable by the agent, which can be a nice way for the agent to understand its limitations and suggest changes.
-- Run `turtle list` to see everything that's running.
+- Run `turtle list` to see running VMs.
 
 ## Security
 
@@ -71,7 +79,7 @@ Or from source:
 ```sh
 git clone https://github.com/kenkeiter/plasticturtle
 cd plasticturtle
-make build            # -> ./bin/plasticturtle and ./bin/plasticturtle-softnet-shim
+make build # -> ./bin/plasticturtle and ./bin/plasticturtle-softnet-shim
 cp bin/plasticturtle bin/plasticturtle-softnet-shim /usr/local/bin/
 ln -s /usr/local/bin/plasticturtle /usr/local/bin/turtle   # optional short alias
 ```
@@ -103,43 +111,6 @@ that:
   per prompt;
 - preserves `$?` across the hook, tolerates `errexit`, and `return 0` silently
   if it is not on `PATH` or the plugin is sourced twice.
-
-## Quick start
-
-```sh
-cd ~/code/myproject
-turtle init      # pick an image, name any ports; writes .plasticturtle and allows it
-turtle shell     # clone, boot, and log in
-```
-
-`turtle init` is interactive and refuses to run without a TTY or when a
-`.plasticturtle` already exists. It offers the images `tart list` already has
-locally (skipping running VMs and `pt-*` clones of its own) plus a free-text OCI
-reference entry, then asks for port forwards as one comma-separated line
-(`3000, 5432:15432`). It writes a commented `.plasticturtle` and records trust in
-it without a second prompt — you just authored the file.
-
-What the first `turtle shell` does, in order: resolve the project, check trust,
-garbage-collect stale state, bind the configured host ports (prompting if one is
-taken), write the instance record, spawn a detached supervisor, wait at a spinner
-for the VM, then hand the terminal to the guest's login shell.
-
-Expect the first boot to take **about 30 seconds** with the tested image. The
-clone itself is near-instant — it is APFS copy-on-write, not a copy.
-
-You land here:
-
-```
-admin@guest ~ % pwd
-/Volumes/My Shared Files/project
-admin@guest ~ % echo $PT_IN_VM_SESSION
-1
-```
-
-That directory *is* your project on the host, read-write in both directions by
-default. A second `turtle shell` in another terminal attaches to the same VM rather
-than booting a new one. When the last one exits, the VM stops and the clone is
-deleted; the only thing that outlives it is `trust.json`.
 
 ## Configuration
 
@@ -815,6 +786,12 @@ rm -rf ~/.local/state/plasticturtle/instances/<project-id>
 | a stray `pt-*` VM in `tart list` | run `turtle list`; the orphan sweep deletes `pt-*` VMs no record claims |
 | backspace does not erase, arrow keys print escapes | the guest could not be taught your `TERM` and fell back. Check `infocmp "$TERM"` inside the guest; a guest image without `tic` cannot be taught one. `TERM=xterm-256color turtle shell` sidesteps it |
 | `DISK*` shows ~30G for a VM that just booted | expected. See [`turtle list`](#turtle-list) |
+
+## FAQ
+
+How can processes running in a Turtle shell know that they are running in the VM?
+
+> The `$PT_IN_VM_SESSION` environment variable is exported and set to `1` within shell sessions.
 
 ## License
 
