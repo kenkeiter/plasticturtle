@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kenkeiter/plasticturtle/internal/config"
+	"github.com/kenkeiter/plasticturtle/internal/progname"
 	"github.com/kenkeiter/plasticturtle/internal/trust"
 )
 
@@ -42,7 +43,7 @@ func runAllow(e *env, path string, in io.Reader, out io.Writer) error {
 	}
 
 	// A failure to read the trust database is not fatal here: the worst case is
-	// that the user is shown the full summary instead of a diff, and pt allow
+	// that the user is shown the full summary instead of a diff, and plasticturtle allow
 	// would rather over-explain than refuse to run.
 	prev, hasPrev, _ := e.Trust.Get(p.Dir)
 
@@ -68,12 +69,12 @@ func runAllow(e *env, path string, in io.Reader, out io.Writer) error {
 	case "y", "yes":
 	default:
 		// EOF lands here too, which is the behavior we want: a non-interactive
-		// `pt allow` declines rather than granting trust nobody confirmed.
+		// `plasticturtle allow` declines rather than granting trust nobody confirmed.
 		fmt.Fprintln(out, "Not allowed.")
 		return errDeclined
 	}
 
-	// The raw bytes go into the record so the next pt allow can diff against
+	// The raw bytes go into the record so the next plasticturtle allow can diff against
 	// what was actually approved rather than against the user's memory of it.
 	if err := e.Trust.Allow(p.Dir, p.Hash, p.Raw, time.Now()); err != nil {
 		return err
@@ -225,14 +226,14 @@ func isRestricted(policy []grant) bool {
 // writeResolveWarning reports a config that is valid but cannot boot.
 //
 // Not fatal: a config can be valid and still name a directory the user has not
-// created yet. But pt shell will refuse to boot until it exists, so say so now
+// created yet. But plasticturtle shell will refuse to boot until it exists, so say so now
 // rather than at the least convenient moment.
 func writeResolveWarning(out io.Writer, resolveErr error) {
 	if resolveErr == nil {
 		return
 	}
 	fmt.Fprintf(out, "\n  warning: %v\n", resolveErr)
-	fmt.Fprintf(out, "  (pt shell will fail until this is fixed)\n")
+	fmt.Fprintf(out, "  (%s shell will fail until this is fixed)\n", progname.Get())
 }
 
 // humanizeSince phrases how long ago an approval happened. The exact timestamp

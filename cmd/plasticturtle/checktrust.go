@@ -17,7 +17,7 @@ import (
 // work that can answer the question: no YAML parsing, no validation, no locks,
 // and no cobra. Trust is defined over the file's exact bytes, so hashing them
 // and reading trust.json is sufficient — whether the config is *valid* is a
-// question for pt allow and pt shell, which have a terminal to explain
+// question for plasticturtle allow and plasticturtle shell, which have a terminal to explain
 // themselves on.
 func checkTrust(dir string) int {
 	projectDir, err := config.Find(dir)

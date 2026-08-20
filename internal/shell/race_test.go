@@ -42,7 +42,7 @@ func (r *hostileReader) prompted() bool {
 // sibling's probe as EADDRINUSE, and asked the user to resolve a conflict that
 // did not exist — then discarded the answer and attached to the winner anyway.
 //
-// Spec section 11 asks for exactly this test ("N goroutines racing pt shell").
+// Spec section 11 asks for exactly this test ("N goroutines racing plasticturtle shell").
 func TestConcurrentFirstRunsCreateOneInstance(t *testing.T) {
 	const cfgWithPort = `version: 1
 image: test-image

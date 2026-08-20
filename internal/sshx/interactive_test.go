@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TestInteractiveExitStatus covers the path pt shell's exit code depends on:
+// TestInteractiveExitStatus covers the path plasticturtle shell's exit code depends on:
 // the remote status must come back as a value, not an error, or the shell
 // would report a failed session every time a user exits non-zero.
 func TestInteractiveExitStatus(t *testing.T) {

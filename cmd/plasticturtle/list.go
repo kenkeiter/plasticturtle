@@ -14,7 +14,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/state"
 )
 
-// listRow is one instance as pt list reports it. The json tags are a
+// listRow is one instance as plasticturtle list reports it. The json tags are a
 // documented interface; renaming one is a breaking change for anything parsing
 // --json output.
 type listRow struct {
@@ -23,7 +23,7 @@ type listRow struct {
 	State   string `json:"state"`
 
 	// Persist distinguishes a VM pt will destroy from the user's own image,
-	// booted in place by pt shell --persist and left behind afterwards.
+	// booted in place by plasticturtle shell --persist and left behind afterwards.
 	Persist       bool    `json:"persist"`
 	Sessions      int     `json:"sessions"`
 	CPUPercent    float64 `json:"cpuPercent"`

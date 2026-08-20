@@ -11,7 +11,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/state"
 )
 
-// withInstance writes a running instance record for a project, so pt list has
+// withInstance writes a running instance record for a project, so plasticturtle list has
 // something to render.
 //
 // The supervisor PID is this test process: state.Alive requires both a live PID
@@ -83,7 +83,7 @@ func TestListTableRendersEveryColumn(t *testing.T) {
 		"* approximate: CoW clones share blocks with the source image.",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("pt list output is missing %q:\n%s", want, got)
+			t.Errorf("plasticturtle list output is missing %q:\n%s", want, got)
 		}
 	}
 }
@@ -92,7 +92,7 @@ func TestListTableRendersEveryColumn(t *testing.T) {
 // dead. The record is only a claim; process liveness is what makes it true.
 //
 // The project's lock is held for the duration, which is what makes this test
-// about the STATE override at all: unheld, pt list's opportunistic GC reclaims
+// about the STATE override at all: unheld, plasticturtle list's opportunistic GC reclaims
 // the record before it can be rendered — the correct outcome, and the reason
 // this override only matters for a project GC had to skip.
 func TestListReportsDeadWhenSupervisorIsGone(t *testing.T) {

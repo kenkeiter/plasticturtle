@@ -40,7 +40,7 @@ const (
 	SessionPollInterval = 2 * time.Second
 
 	// SessionEmptyDebounce is how long the session set must stay empty before
-	// teardown begins. It exists so that `exit && pt shell` re-entry does not
+	// teardown begins. It exists so that `exit && plasticturtle shell` re-entry does not
 	// destroy the VM out from under the user.
 	SessionEmptyDebounce = 3 * time.Second
 
@@ -61,12 +61,12 @@ const (
 
 // Attach path.
 const (
-	// CreatingPollInterval is how often a second `pt shell` re-reads
+	// CreatingPollInterval is how often a second `plasticturtle shell` re-reads
 	// instance.json while waiting for state to reach running.
 	CreatingPollInterval = 250 * time.Millisecond
 
 	// StoppingWaitTimeout bounds waiting for a stopping instance to reach dead
-	// before a re-entering `pt shell` creates a fresh one.
+	// before a re-entering `plasticturtle shell` creates a fresh one.
 	StoppingWaitTimeout = 45 * time.Second
 
 	// BannerRefreshInterval is how often the shell's status banner re-reads
@@ -100,14 +100,14 @@ const (
 	// Deliberately a small multiple of the poll interval rather than
 	// LockTimeout: a sweep across N wedged projects would otherwise cost
 	// N x LockTimeout, and for a report a busy project is a skip, not a
-	// failure. It lives here rather than in each caller so that pt list and
-	// pt ports --global cannot drift apart.
+	// failure. It lives here rather than in each caller so that plasticturtle list and
+	// plasticturtle ports --global cannot drift apart.
 	StatusLockWait = 5 * LockRetryInterval
 )
 
 // Shell plugin.
 const (
-	// CheckTrustBudget is the wall-clock budget for `pt _check-trust`. The zsh
+	// CheckTrustBudget is the wall-clock budget for `plasticturtle _check-trust`. The zsh
 	// chpwd hook runs it on every directory change, so exceeding this is a
 	// user-visible regression. Enforced by a benchmark, not at runtime.
 	CheckTrustBudget = 10 * time.Millisecond

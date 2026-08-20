@@ -14,8 +14,8 @@ import (
 )
 
 func runPorts(e *env, path string, out io.Writer, global, jsonOut bool) error {
-	// Spec section 10 names pt ports as a garbage-collection site alongside
-	// pt shell and pt list, and it is the one most likely to be run first after
+	// Spec section 10 names plasticturtle ports as a garbage-collection site alongside
+	// plasticturtle shell and plasticturtle list, and it is the one most likely to be run first after
 	// a reboot or a crash. Skipping it here was silent: GlobalRows filters
 	// dead-supervisor projects out of the display, so their orphaned clones and
 	// state directories would go unreported AND unreclaimed until the user

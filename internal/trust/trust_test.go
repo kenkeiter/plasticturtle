@@ -497,7 +497,7 @@ func TestAllowRejectsASnapshotThatDoesNotMatchItsHash(t *testing.T) {
 	s, _ := newStore(t)
 
 	// The whole value of the snapshot is that it is the bytes the hash
-	// approved. Storing a mismatched pair would let the next pt allow diff
+	// approved. Storing a mismatched pair would let the next plasticturtle allow diff
 	// against something the user never saw and report "nothing changed".
 	if err := s.Allow("/Users/alice/proj", hashA, []byte("image: img\n"), time.Now()); err == nil {
 		t.Fatal("Allow accepted a snapshot that does not hash to the approved hash")

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kenkeiter/plasticturtle/internal/banner"
+	"github.com/kenkeiter/plasticturtle/internal/progname"
 	"github.com/kenkeiter/plasticturtle/internal/shell"
 	"github.com/kenkeiter/plasticturtle/internal/sshx"
 	"github.com/kenkeiter/plasticturtle/internal/sys"
@@ -33,18 +34,18 @@ func argPath(args []string) string {
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "pt",
+		Use:   progname.Get(),
 		Short: "Run project directories inside ephemeral Tart VMs",
 		Long: "Plastic Turtle manages ephemeral Tart VM instances that sandbox project\n" +
-			"directories. A project opts in with a .plasticturtle file; pt shell clones,\n" +
-			"boots, and connects to a VM with the project mounted, and tears it down when\n" +
-			"the last shell exits.",
+			"directories. A project opts in with a .plasticturtle file; the shell\n" +
+			"subcommand clones, boots, and connects to a VM with the project mounted,\n" +
+			"and tears it down when the last shell exits.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Version:       version,
-		// Bare `pt` is someone looking around rather than asking for anything,
-		// so it gets the logo above the usage cobra would have printed on its
-		// own. NoArgs keeps `pt bogus` an unknown-command error instead of
+		// A bare invocation is someone looking around rather than asking for
+		// anything, so it gets the logo above the usage cobra would have printed
+		// on its own. NoArgs keeps an unknown subcommand an error instead of
 		// quietly showing the banner.
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -222,7 +223,7 @@ func newSetupFirewallCmd() *cobra.Command {
 			return runSetupFirewall(e.Store, shim, cmd.OutOrStdout(), sudoRunner)
 		},
 	}
-	cmd.Flags().StringVar(&shim, "shim", "", "path to the pt-softnet-shim binary (default: next to pt)")
+	cmd.Flags().StringVar(&shim, "shim", "", "path to the plasticturtle-softnet-shim binary (default: next to this binary)")
 	return cmd
 }
 
@@ -241,7 +242,7 @@ func newSuperviseCmd() *cobra.Command {
 	}
 }
 
-// newCheckTrustCmd exists so that `pt help` and `pt _check-trust` with the
+// newCheckTrustCmd exists so that `pt help` and `plasticturtle _check-trust` with the
 // wrong argument count behave sanely. The hot path does not come through here:
 // main serves it before the command tree is built. See checkTrust.
 func newCheckTrustCmd() *cobra.Command {
@@ -260,7 +261,7 @@ func newCheckTrustCmd() *cobra.Command {
 func newZSHHookCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "zsh-hook",
-		Short:  "Print the zsh integration for `source <(pt zsh-hook)`",
+		Short:  "Print the zsh integration for `source <(plasticturtle zsh-hook)`",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

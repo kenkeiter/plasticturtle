@@ -25,8 +25,8 @@ func TestRunRejectsUntrustedConfig(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for an untrusted config")
 	}
-	if err.Error() != untrustedMessage {
-		t.Errorf("error = %q, want the spec §5 wording %q", err, untrustedMessage)
+	if err.Error() != untrustedMessage() {
+		t.Errorf("error = %q, want the spec §5 wording %q", err, untrustedMessage())
 	}
 	if code != exitFailure {
 		t.Errorf("exit code = %d, want %d", code, exitFailure)
@@ -46,8 +46,8 @@ func TestRunRejectsChangedConfig(t *testing.T) {
 	h.allow("sha256:" + strings.Repeat("a", 64))
 
 	code, err := h.run()
-	if err == nil || err.Error() != untrustedMessage {
-		t.Fatalf("error = %v, want %q", err, untrustedMessage)
+	if err == nil || err.Error() != untrustedMessage() {
+		t.Fatalf("error = %v, want %q", err, untrustedMessage())
 	}
 	if code != exitFailure {
 		t.Errorf("exit code = %d, want %d", code, exitFailure)
@@ -305,7 +305,7 @@ func TestPersistPreflightRefusals(t *testing.T) {
 	})
 }
 
-// A second pt shell for a live instance shares it. Spawning a second supervisor
+// A second plasticturtle shell for a live instance shares it. Spawning a second supervisor
 // would mean two VMs for one project.
 func TestRunAttachesToRunningInstanceWithoutSpawning(t *testing.T) {
 	h := newHarness(t)
@@ -620,7 +620,7 @@ func TestRunRemovesSessionWhenCancelled(t *testing.T) {
 	}
 }
 
-// pt shell's exit status is the remote shell's, so that scripts and shell
+// plasticturtle shell's exit status is the remote shell's, so that scripts and shell
 // chains behave as if the command had run locally.
 func TestRunMirrorsRemoteExitStatus(t *testing.T) {
 	h := newHarness(t)

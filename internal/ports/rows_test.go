@@ -231,7 +231,7 @@ func TestGlobalRowsSkipsLockedProject(t *testing.T) {
 	defer func() { _ = lk.Unlock() }()
 
 	// The point is not just the omission but the promptness: a status command
-	// must not wait out ptcfg.LockTimeout behind somebody else's pt shell.
+	// must not wait out ptcfg.LockTimeout behind somebody else's plasticturtle shell.
 	start := time.Now()
 	rows, err := GlobalRows(context.Background(), s)
 	elapsed := time.Since(start)

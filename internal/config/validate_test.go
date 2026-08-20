@@ -107,7 +107,7 @@ func TestValidate(t *testing.T) {
 
 func TestValidateReportsEveryViolation(t *testing.T) {
 	// A user fixing a config should see all of it at once, not one error per
-	// pt allow round trip.
+	// plasticturtle allow round trip.
 	cfg := &Config{
 		Version:   7,
 		Image:     "",

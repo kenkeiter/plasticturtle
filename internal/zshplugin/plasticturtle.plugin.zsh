@@ -1,8 +1,8 @@
-# pt.plugin.zsh — Plastic Turtle shell integration.
+# plasticturtle.plugin.zsh — Plastic Turtle shell integration.
 #
 # Install by adding this to ~/.zshrc:
 #
-#     source <(pt zsh-hook)
+#     source <(@@PROG@@ zsh-hook)
 #
 # It warns when a project's .plasticturtle is not allowed.
 #
@@ -12,9 +12,9 @@
 # must survive options the user may have set — notably errexit, under which a
 # bare non-zero exit anywhere here would kill the shell.
 
-# No pt, no plugin. Sourcing this from .zshrc on a machine where pt is not
-# installed must be silent rather than an error on every new shell.
-if ! command -v pt >/dev/null 2>&1; then
+# No @@PROG@@, no plugin. Sourcing this from .zshrc on a machine where it is
+# not installed must be silent rather than an error on every new shell.
+if ! command -v @@PROG@@ >/dev/null 2>&1; then
   return 0
 fi
 
@@ -30,7 +30,7 @@ autoload -Uz add-zsh-hook
 typeset -g _PT_PROJECT_DIR=''
 typeset -g _PT_TRUST=''
 
-# Exit codes from `pt _check-trust`, mirroring internal/zshplugin's constants.
+# Exit codes from `@@PROG@@ _check-trust`, mirroring internal/zshplugin's constants.
 typeset -gr _PT_EXIT_TRUSTED=0
 typeset -gr _PT_EXIT_UNTRUSTED=10
 
@@ -92,10 +92,11 @@ _pt_chpwd() {
   _PT_PROJECT_DIR=$dir
 
   # The non-zero codes here are answers, not failures, so the call is written as
-  # a condition: a bare `pt _check-trust; code=$?` would abort the shell under
-  # errexit, and 10 — "not allowed" — is the most likely code this ever gets.
+  # a condition: a bare `@@PROG@@ _check-trust; code=$?` would abort the shell
+  # under errexit, and 10 — "not allowed" — is the most likely code this ever
+  # gets.
   local code=0
-  pt _check-trust $dir >/dev/null 2>&1 || code=$?
+  @@PROG@@ _check-trust $dir >/dev/null 2>&1 || code=$?
 
   case $code in
     $_PT_EXIT_TRUSTED)
@@ -103,11 +104,11 @@ _pt_chpwd() {
       ;;
     $_PT_EXIT_UNTRUSTED)
       _PT_TRUST=untrusted
-      print -P -- "%F{yellow}⚠️  .plasticturtle is not allowed (new or changed). Run 'pt allow' before 'pt shell'.%f"
+      print -P -- "%F{yellow}⚠️  .plasticturtle is not allowed (new or changed). Run '@@PROG@@ allow' before '@@PROG@@ shell'.%f"
       ;;
     *)
-      # pt failed for a reason of its own. Claiming either trust state would be
-      # a lie, so say nothing rather than guess.
+      # @@PROG@@ failed for a reason of its own. Claiming either trust state would
+      # be a lie, so say nothing rather than guess.
       _PT_TRUST=error
       ;;
   esac

@@ -69,7 +69,7 @@ type bannerOpts struct {
 	persist bool // this VM *is* the base image: say that too
 }
 
-// banner is the status line pt shell shows while a session is attached: the
+// banner is the status line plasticturtle shell shows while a session is attached: the
 // sandbox identity on the left, the egress warning in the middle, the
 // instance's live figures on the right.
 type banner struct {
@@ -344,7 +344,7 @@ func (b *banner) sample(ctx context.Context, d Deps, projectID string) {
 	}
 }
 
-// countLiveSessions counts attached shells the way pt list would: records
+// countLiveSessions counts attached shells the way plasticturtle list would: records
 // whose process is still alive. It reads under the shared lock and never
 // deletes — reaping stale records is the supervisor's job, not a banner's.
 // Every failure mode reports 1: this shell is attached, or it would not be

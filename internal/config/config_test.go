@@ -151,7 +151,7 @@ func TestLoadUnreadableFile(t *testing.T) {
 		t.Skip("root ignores file permissions")
 	}
 	// An unreadable config is a real error, not "no project here": telling the
-	// user to run pt init would be the wrong advice.
+	// user to run plasticturtle init would be the wrong advice.
 	root := writeProject(t, minimalConfig)
 	if err := os.Chmod(filepath.Join(root, FileName), 0o000); err != nil {
 		t.Fatal(err)

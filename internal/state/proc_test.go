@@ -131,7 +131,7 @@ func TestDiskUsageBytes(t *testing.T) {
 		t.Fatalf("DiskUsageBytes = %d, want at least 65536", n)
 	}
 
-	// A VM directory that does not exist yet is zero, not an error: pt list
+	// A VM directory that does not exist yet is zero, not an error: plasticturtle list
 	// renders a row for an instance whose clone is still being made.
 	n, err = DiskUsageBytes(filepath.Join(dir, "missing"))
 	if err != nil || n != 0 {

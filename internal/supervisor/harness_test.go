@@ -222,7 +222,7 @@ func newHarness(t *testing.T, forwards ...ports.Resolved) *harness {
 	}
 
 	// The supervisor refuses to boot a config the trust database does not
-	// know, so the harness records the approval pt allow would have recorded.
+	// know, so the harness records the approval plasticturtle allow would have recorded.
 	// A test that wants the refusal path clears it; see trust_test.go.
 	ts, err := trust.Open(store.TrustPath())
 	if err != nil {
@@ -246,7 +246,7 @@ func (h *harness) persist() *harness {
 	return h
 }
 
-// writeCreating does what pt shell does before spawning the supervisor.
+// writeCreating does what plasticturtle shell does before spawning the supervisor.
 func (h *harness) writeCreating() {
 	h.t.Helper()
 	lk, err := h.store.Lock(h.projectID)
@@ -398,7 +398,7 @@ func portOf(t *testing.T, addr string) int {
 }
 
 // freePort returns a loopback port nothing is listening on. The gap between
-// closing the probe and the supervisor binding is the same race pt shell has,
+// closing the probe and the supervisor binding is the same race plasticturtle shell has,
 // and is what the supervisor's single rebind retry exists for.
 func freePort(t *testing.T) int {
 	t.Helper()

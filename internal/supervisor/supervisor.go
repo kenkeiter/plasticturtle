@@ -1,7 +1,7 @@
-// Package supervisor implements pt _supervise, the detached process that owns
+// Package supervisor implements plasticturtle _supervise, the detached process that owns
 // one instance for its entire life.
 //
-// It is not a daemon. It is spawned by the pt shell that creates an instance,
+// It is not a daemon. It is spawned by the plasticturtle shell that creates an instance,
 // it owns exactly that instance's tart run child and SSH tunnels, and it exits
 // when the last session leaves. Nothing else in the system outlives a VM.
 //
@@ -82,7 +82,7 @@ func ParseParams(r io.Reader) (*Params, error) {
 	return &p, nil
 }
 
-// EncodeParams writes p as JSON, for pt shell to pipe to the child.
+// EncodeParams writes p as JSON, for plasticturtle shell to pipe to the child.
 func EncodeParams(w io.Writer, p *Params) error {
 	if w == nil {
 		return errors.New("supervisor: no parameter sink")
@@ -136,7 +136,7 @@ type Deps struct {
 //     the VM dies, or on SIGTERM.
 //
 // A boot failure marks the instance dead and cleans up the clone before
-// returning; the waiting pt shell reports it. Teardown is idempotent, because
+// returning; the waiting plasticturtle shell reports it. Teardown is idempotent, because
 // it can be entered from any of the three watchers at once.
 func Run(ctx context.Context, p *Params, d Deps) error {
 	if ctx == nil {

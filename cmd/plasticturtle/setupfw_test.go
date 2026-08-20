@@ -23,7 +23,7 @@ func TestLocateShimBinary(t *testing.T) {
 	if _, err := locateShimBinary("/definitely/missing"); err == nil {
 		// An explicit-but-missing path falls through to the other candidates;
 		// with none present it must error.
-		if _, err2 := os.Stat(filepath.Join(filepath.Dir(os.Args[0]), "pt-softnet-shim")); err2 != nil {
+		if _, err2 := os.Stat(filepath.Join(filepath.Dir(os.Args[0]), "plasticturtle-softnet-shim")); err2 != nil {
 			t.Fatal("expected error when no shim candidate exists")
 		}
 	}
@@ -59,7 +59,7 @@ func TestCopyFilePreservesContentAndMode(t *testing.T) {
 func TestRunSetupFirewallInstallsAndEscalates(t *testing.T) {
 	root := t.TempDir()
 	store := &state.Store{Root: root}
-	src := filepath.Join(t.TempDir(), "pt-softnet-shim")
+	src := filepath.Join(t.TempDir(), "plasticturtle-softnet-shim")
 	if err := os.WriteFile(src, []byte("shim"), 0o755); err != nil {
 		t.Fatal(err)
 	}

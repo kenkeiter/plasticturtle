@@ -22,18 +22,23 @@ The easiest way to install Plastic Turtle is using Homebrew:
 brew install kenkeiter/tap/plasticturtle
 ```
 
-Once you've got it, using Plastic Turtle (`pt`) is pretty straightforward:
+That installs the command as **`plasticturtle`**, with **`turtle`** as a shorter
+alias for it. This README uses `turtle` throughout; both are the same binary, and
+every message it prints names whichever one you invoked. If something else on
+your system already owns `turtle`, drop the alias — `plasticturtle` always works.
 
-1. 🐢 **Add a `.plasticturtle` config to your project** – From your project directory, run `pt init`; you will be prompted to choose a base image and other parameters! A `.plasticturtle` file will be created in your project directory.
+Once you've got it, using Plastic Turtle (`turtle`) is pretty straightforward:
 
-2. 🏖️🪏 **Play in the sandbox using `pt shell`** – Any time you are within your project directory, running `pt shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will share the same VM for that project.
+1. 🐢 **Add a `.plasticturtle` config to your project** – From your project directory, run `turtle init`; you will be prompted to choose a base image and other parameters! A `.plasticturtle` file will be created in your project directory.
+
+2. 🏖️🪏 **Play in the sandbox using `turtle shell`** – Any time you are within your project directory, running `turtle shell` will open up a new (SSH) connection to the project's VM (cloning and starting it, if it isn't already!) and give you a shell. You can shell into that VM as many times as you like! All shells will share the same VM for that project.
 
 3. 🧹🐢 **Don't worry about cleanup!** – The sand stays in the turtle. VM instances are ephemeral, and are deleted after you close the last shell for your project; cloned VMs are copy-on-write, so you won't use more storage than you need to.
 
 Couple of #protips: 
 
-- If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `pt allow` within your project directory. _Critically, this cannot be run from within the VM itself_ – but your project's `.plasticturtle` remains editable by the agent, which can be a nice way for the agent to understand its limitations and suggest changes.
-- Run `pt list` to see everything that's running.
+- If you (or an agent) make changes to your project's `.plasticturtle` configuration, you must explicitly allow them by running `turtle allow` within your project directory. _Critically, this cannot be run from within the VM itself_ – but your project's `.plasticturtle` remains editable by the agent, which can be a nice way for the agent to understand its limitations and suggest changes.
+- Run `turtle list` to see everything that's running.
 
 ## Security
 
@@ -49,7 +54,7 @@ Plastic Turtle provides two types of isolation:
 | Host | macOS on Apple Silicon (Tart is macOS/arm64 only) |
 | `tart` | on `PATH`; developed against 2.32.1 |
 | Guest image | `ghcr.io/cirruslabs/macos-tahoe-base:latest` is the tested image |
-| Shell plugin | zsh (optional; `pt` itself works from any shell) |
+| Shell plugin | zsh (optional; the CLI itself works from any shell) |
 | Build | Go 1.26+ |
 
 v1 targets **macOS guests**. Linux guests boot and forward ports, but the
@@ -58,17 +63,24 @@ directory share is not auto-mounted; see [Linux guests](#linux-guests).
 ## Install
 
 ```sh
-git clone https://github.com/kenkeiter/plasticturtle
-cd plasticturtle
-make build            # -> ./bin/pt and ./bin/pt-softnet-shim
-cp bin/pt bin/pt-softnet-shim /usr/local/bin/
+brew install kenkeiter/tap/plasticturtle
 ```
 
-`pt-softnet-shim` is only needed for the [network firewall](#network-firewall);
-keep it next to `pt` (`pt setup` looks for it there). If you do not use
+Or from source:
+
+```sh
+git clone https://github.com/kenkeiter/plasticturtle
+cd plasticturtle
+make build            # -> ./bin/plasticturtle and ./bin/plasticturtle-softnet-shim
+cp bin/plasticturtle bin/plasticturtle-softnet-shim /usr/local/bin/
+ln -s /usr/local/bin/plasticturtle /usr/local/bin/turtle   # optional short alias
+```
+
+`plasticturtle-softnet-shim` is only needed for the [network firewall](#network-firewall);
+keep it next to `plasticturtle` (`turtle setup` looks for it there). If you do not use
 `restricted` network policies you can skip it.
 
-Pull the tested image once (first `pt shell` would otherwise pull it inline,
+Pull the tested image once (first `turtle shell` would otherwise pull it inline,
 inside the 120 s boot timeout):
 
 ```sh
@@ -78,36 +90,36 @@ tart pull ghcr.io/cirruslabs/macos-tahoe-base:latest
 Then add the zsh integration to `~/.zshrc`:
 
 ```sh
-source <(pt zsh-hook)
+source <(turtle zsh-hook)
 ```
 
 The plugin is small and deliberately unobtrusive. It installs a `chpwd` hook
 that:
 
 - walks upward from `$PWD` for a `.plasticturtle`, stopping at `$HOME` or `/`;
-- runs `pt _check-trust <dir>` when one is found (exit `0` trusted, `10`
+- runs `turtle _check-trust <dir>` when one is found (exit `0` trusted, `10`
   new/changed, `1` error);
 - prints a one-line yellow warning on `10`, once per directory change, not once
   per prompt;
 - preserves `$?` across the hook, tolerates `errexit`, and `return 0` silently
-  if `pt` is not on `PATH` or the plugin is sourced twice.
+  if it is not on `PATH` or the plugin is sourced twice.
 
 ## Quick start
 
 ```sh
 cd ~/code/myproject
-pt init      # pick an image, name any ports; writes .plasticturtle and allows it
-pt shell     # clone, boot, and log in
+turtle init      # pick an image, name any ports; writes .plasticturtle and allows it
+turtle shell     # clone, boot, and log in
 ```
 
-`pt init` is interactive and refuses to run without a TTY or when a
+`turtle init` is interactive and refuses to run without a TTY or when a
 `.plasticturtle` already exists. It offers the images `tart list` already has
 locally (skipping running VMs and `pt-*` clones of its own) plus a free-text OCI
 reference entry, then asks for port forwards as one comma-separated line
 (`3000, 5432:15432`). It writes a commented `.plasticturtle` and records trust in
 it without a second prompt — you just authored the file.
 
-What the first `pt shell` does, in order: resolve the project, check trust,
+What the first `turtle shell` does, in order: resolve the project, check trust,
 garbage-collect stale state, bind the configured host ports (prompting if one is
 taken), write the instance record, spawn a detached supervisor, wait at a spinner
 for the VM, then hand the terminal to the guest's login shell.
@@ -125,7 +137,7 @@ admin@guest ~ % echo $PT_IN_VM_SESSION
 ```
 
 That directory *is* your project on the host, read-write in both directions by
-default. A second `pt shell` in another terminal attaches to the same VM rather
+default. A second `turtle shell` in another terminal attaches to the same VM rather
 than booting a new one. When the last one exits, the VM stops and the clone is
 deleted; the only thing that outlives it is `trust.json`.
 
@@ -191,7 +203,7 @@ Additional rules:
   rejected rather than silently treated as a relative directory. Relative paths
   resolve against the project directory, never the working directory. Every
   resolved path must exist and be a directory before the VM is cloned; a missing
-  one is a hard error from `pt shell` (and a non-fatal warning from `pt allow`).
+  one is a hard error from `turtle shell` (and a non-fatal warning from `turtle allow`).
 - **The `project` mount is implicit.** The project directory is always shared,
   first in the list, at `/Volumes/My Shared Files/project` in a macOS guest.
   Listing `name: project` in `mounts[]` only changes its `mode`; it may not
@@ -201,12 +213,12 @@ Additional rules:
 
 "Aha," you say "but if the `.plasticturtle` file is exposed in the VM, it can be edited from the VM!" Yep, that's by design. In my experiments, it's been a nice way for the agent to understand its limitations and also to request changes to support your application. 
 
-But obviously, you shouldn't blindly accept those suggestions – that's why **`pt shell` does not act upon a `.plasticturtle` configuration until you explicitly approve that configuration.** When you run `pt allow` it shows you a summary of what changed, and you must explicitly approve it before running `pt shell`. 
+But obviously, you shouldn't blindly accept those suggestions – that's why **`turtle shell` does not act upon a `.plasticturtle` configuration until you explicitly approve that configuration.** When you run `turtle allow` it shows you a summary of what changed, and you must explicitly approve it before running `turtle shell`. 
 
 An example might look like this:
 
 ```
-$ pt allow
+$ turtle allow
 .plasticturtle in /Users/alice/code/myproject
 
   image      ghcr.io/cirruslabs/macos-tahoe-base:latest
@@ -230,7 +242,7 @@ time; the risk in an edit lives entirely in its delta, and reprinting the parts
 you already approved is how you stop reading them:
 
 ```
-$ pt allow
+$ turtle allow
 .plasticturtle in /Users/alice/code/myproject
 Changed since you allowed it 3 days ago:
 
@@ -256,41 +268,41 @@ Mechanics:
   list above is diffed against. The hash alone decides trust; the snapshot is
   only there so you can be shown what moved.
 - Any change to the bytes — a comment, whitespace, a new mount — invalidates it.
-  `pt shell` then fails with
-  `.plasticturtle has changed (or was never allowed). Review it, then run: pt allow`
+  `turtle shell` then fails with
+  `.plasticturtle has changed (or was never allowed). Review it, then run: turtle allow`
   and never with a prompt. A prompt at that moment would teach you to approve a
-  file you have not read, which is the exact failure `pt allow` exists to
+  file you have not read, which is the exact failure `turtle allow` exists to
   prevent. The message does not distinguish "changed" from "never allowed"; the
   remedy is identical either way.
 - Because the key is the canonical path, moving or renaming the project requires
   re-allowing, and a project reached through a symlink is the same project as one
   reached directly.
-- `pt allow` validates first: an invalid config cannot be trusted, and you are
+- `turtle allow` validates first: an invalid config cannot be trusted, and you are
   not asked about something that could never work.
-- `pt allow` on a config that has not changed since you approved it says so and
+- `turtle allow` on a config that has not changed since you approved it says so and
   exits `0` without prompting. Asking again for a yes you already gave, about a
   file that is identical to the byte, is how "y" becomes a reflex.
 - Answering anything but `y`/`yes` — including EOF, i.e. a non-interactive run —
   declines and exits `1` with `Not allowed.` It does not print an error; you made
   a choice.
-- `pt init` records trust without a confirmation prompt, because you just
+- `turtle init` records trust without a confirmation prompt, because you just
   answered every question the summary would have shown you.
 
 This is why the zsh plugin exists: it tells you the moment you `cd` into a
-project whose config has changed, rather than at `pt shell` time when you are
+project whose config has changed, rather than at `turtle shell` time when you are
 already trying to get work done.
 
 ## Commands
 
 ```
-pt init  [path]              Interactive setup; writes .plasticturtle and allows it
-pt allow [path]              Show what the config grants, then trust its exact bytes
-pt shell [path] [--persist]  Enter the project's VM, creating it if needed
-pt ports [path] [--global]   Configured forwards and their live status
-pt list                      Active instances with resource usage
+turtle init  [path]              Interactive setup; writes .plasticturtle and allows it
+turtle allow [path]              Show what the config grants, then trust its exact bytes
+turtle shell [path] [--persist]  Enter the project's VM, creating it if needed
+turtle ports [path] [--global]   Configured forwards and their live status
+turtle list                      Active instances with resource usage
 ```
 
-`path` defaults to the working directory. Except for `init`, `pt` walks upward
+`path` defaults to the working directory. Except for `init`, `turtle` walks upward
 from it to the nearest `.plasticturtle`, so every command works from a
 subdirectory.
 
@@ -298,11 +310,11 @@ Global flags: `--json` (honored by `list` and `ports`), `-v`/`--verbose`,
 `--version`.
 
 Hidden subcommands, listed for completeness — do not invoke them yourself:
-`pt _supervise` (the detached per-instance supervisor, fed its parameters as
-JSON on stdin), `pt _check-trust <dir>` (the plugin's fast trust probe),
-`pt zsh-hook` (prints the plugin).
+`turtle _supervise` (the detached per-instance supervisor, fed its parameters as
+JSON on stdin), `turtle _check-trust <dir>` (the plugin's fast trust probe),
+`turtle zsh-hook` (prints the plugin).
 
-### `pt shell`
+### `turtle shell`
 
 Creates the instance if there is none, otherwise attaches to the existing one.
 Prompts about host-port collisions before the VM exists; shows a spinner while
@@ -318,15 +330,15 @@ on the create path — the easiest way to find that log.
 
 #### `--persist`
 
-`pt shell --persist` boots the base image **itself**, instead of a
+`turtle shell --persist` boots the base image **itself**, instead of a
 throwaway clone of it. Everything the guest writes — packages you install, tools
-you configure, etc. — is still there next time, and every ordinary `pt shell` 
+you configure, etc. — is still there next time, and every ordinary `turtle shell` 
 afterwards clones from an image that already has it.
 
 That is the whole feature, and it is worth being clear about what it costs:
 
-- The VM is not discarded at teardown. `pt` stops it (gracefully, because that
-  disk now matters) and leaves it alone. Nothing in `pt` will ever delete it —
+- The VM is not discarded at teardown. It is stopped gracefully (because that
+  disk now matters) and leaves it alone. Nothing in Plastic Turtle will ever delete it —
   not teardown, not garbage collection.
 - Whatever the guest does to that image sticks, including whatever a compromised
   dependency does. The sandbox stops being a sandbox for the duration.
@@ -344,18 +356,18 @@ That is the whole feature, and it is worth being clear about what it costs:
 
 Ephemerality is fixed when the VM boots, exactly like its mounts and image. So
 `--persist` applies only to the shell that creates the instance: pass it while
-one is already running and `pt` says so and attaches anyway, and a shell
+one is already running and it says so and attaches anyway, and a shell
 entering a persistent VM without the flag is told that its changes are being
 kept. While you are in one, the status banner reads **Persistent** rather than
-**Sandbox**, and `pt list` shows the mode in its own column.
+**Sandbox**, and `turtle list` shows the mode in its own column.
 
 The intended workflow is to persist deliberately and briefly — set the image up,
 exit, and go back to ephemeral shells:
 
 ```
-pt shell --persist   # install, configure, break things
+turtle shell --persist   # install, configure, break things
 exit
-pt shell             # a clone of everything you just did, throwaway again
+turtle shell             # a clone of everything you just did, throwaway again
 ```
 
 Exit status:
@@ -363,21 +375,21 @@ Exit status:
 | Status | Meaning |
 |---|---|
 | *n* | the remote shell exited with *n* |
-| `1` | `pt` itself failed (no config, untrusted, missing mount, boot timeout) |
+| `1` | Plastic Turtle itself failed (no config, untrusted, missing mount, boot timeout) |
 | `255` | the SSH session never happened or was lost mid-flight (ssh(1)'s convention) |
 
 Diagnostics go to stderr, so the guest shell's stdout stays clean for redirection.
 
 #### The terminal in the guest
 
-When stdin is a terminal, `pt shell` gives the guest a PTY that mirrors the
+When stdin is a terminal, `turtle shell` gives the guest a PTY that mirrors the
 host's: the same size, the same control characters (erase, interrupt, suspend,
 flow control), and — where it can — the same `TERM`.
 
 `TERM` needs a negotiation because terminals like Ghostty, kitty and WezTerm
 ship a terminfo entry of their own and install it only on the host. A guest
 handed a name it cannot resolve gets no cursor-movement capabilities, and the
-first thing you notice is that **backspace stops erasing**. So `pt` asks the
+first thing you notice is that **backspace stops erasing**. So it asks the
 guest whether it knows the name, and if it does not, compiles the host's own
 description into `$HOME/.terminfo` in the guest with `tic`. If that fails — no
 `tic`, no writable home, an entry the host cannot describe — the session falls
@@ -387,13 +399,13 @@ The whole exchange is bounded by a short timeout and never blocks the prompt: a
 slow guest costs you a plainer `TERM`, not a slower shell. Nothing is written
 outside the clone, which is discarded at teardown.
 
-### `pt list`
+### `turtle list`
 
 Runs a global garbage-collection pass, then reports every project with an
 instance record.
 
 ```
-$ pt list
+$ turtle list
 PROJECT                       VM                            MODE     STATE    SESSIONS  CPU %  MEM     DISK*  UPTIME
 /Users/alice/code/myproject   pt-e3b5380ebc1df727-e0342b0a  clone    running  2         38.4   2.1G    29.8G  4m12s
 /Users/alice/code/imagework    tahoe-dev                    persist  running  1         12.0   1.4G    31.1G  22m03s
@@ -421,10 +433,10 @@ exactly this reason. No smarter accounting is attempted.
 `--json` emits an array (never `null`) of objects with keys `project`, `vm`,
 `state`, `sessions`, `cpuPercent`, `memBytes`, `diskBytes`, `uptimeSeconds`.
 
-### `pt ports`
+### `turtle ports`
 
 ```
-$ pt ports
+$ turtle ports
 VM PORT  HOST PORT  STATUS
 3000     3000       forwarding
 5432     15432      forwarding (remapped from 5432)
@@ -470,7 +482,7 @@ the supervisor by construction, so there is no orphaned listener to clean up.
 ### Collisions
 
 If a configured host port is already bound (or is a privileged port this user
-cannot bind), `pt shell` — which still owns a terminal at that point — offers an
+cannot bind), `turtle shell` — which still owns a terminal at that point — offers an
 alternative before the VM is created:
 
 ```
@@ -484,14 +496,14 @@ question, so it cannot be stolen out from under the prompt. Press Enter to accep
 it or type any other port; a port that is also taken re-prompts. Without a TTY
 there is no prompt: the automatic port is taken and reported.
 
-`pt ports` then shows `forwarding (remapped from 5432)`.
+`turtle ports` then shows `forwarding (remapped from 5432)`.
 
 **Remaps are never written back to `.plasticturtle`.** Trust is a hash of the
 file's exact bytes, so writing to it would invalidate the hash and turn a routine
 port collision into a security prompt. The remap lives in `instance.json` for the
 lifetime of that instance and disappears with it.
 
-The negotiation is done by `pt shell`, not the supervisor, because the supervisor
+The negotiation is done by `turtle shell`, not the supervisor, because the supervisor
 is detached and has nothing to prompt on. The shell holds each probe listener
 until the instant before it spawns the supervisor, which then re-binds; that gap
 is a race, and the supervisor retries once if it loses.
@@ -514,7 +526,7 @@ What you do not get:
 - **The project directory is read-write from the guest by default.** Anything
   running in the VM can rewrite your repo, including `.plasticturtle` itself and
   any git hooks, `Makefile`, or CI config in it. Set `mode: ro` on the reserved
-  `project` mount if you do not want that. _Note_: If `.plasticturtle` _is_ modified, you must approve changes using `pt allow` before Plastic Turtle will allow futher interaction.
+  `project` mount if you do not want that. _Note_: If `.plasticturtle` _is_ modified, you must approve changes using `turtle allow` before Plastic Turtle will allow futher interaction.
 - **The guest has unrestricted outbound network access _by default_.** An agent
   in the VM can reach the internet, your LAN, and any service listening on your
   host's LAN address. A project can opt into a domain allowlist with a
@@ -552,18 +564,18 @@ Enforcement runs on the host, in a small shim that provides the guest's network
 itself. Install it once:
 
 ```sh
-pt setup     # copies the shim into place; sudo makes it setuid-root
+turtle setup     # copies the shim into place; sudo makes it setuid-root
 ```
 
 This is required only for `restricted` projects; `open` projects are untouched
-and need no setup. Re-run it after upgrading pt. A project whose policy is
+and need no setup. Re-run it after upgrading Plastic Turtle. A project whose policy is
 `restricted` **refuses to boot** if the shim is missing or misconfigured — the
 firewall fails closed rather than silently letting traffic through.
 
 ### How it works
 
-Tart resolves the `softnet` binary from its `PATH`; for a restricted project, pt
-puts its shim there first, and tart hands it the guest's ethernet link. The shim
+Tart resolves the `softnet` binary from its `PATH`; for a restricted project,
+Plastic Turtle puts its shim there first, and tart hands it the guest's ethernet link. The shim
 is the whole software-networking layer: it opens a NAT interface through
 Apple's `vmnet.framework` (via cgo) and relays the guest's ethernet frames onto
 it, enforcing the policy by **DNS-pinning**: it watches DNS answers for allowed
@@ -572,7 +584,7 @@ drops any guest frame whose destination is not pinned. Root is used only to
 create the vmnet interface; the long-lived relay then drops back to your user.
 There is no external Softnet to install.
 
-pt also chooses the sandbox's subnet before boot — the highest free `/24`
+Plastic Turtle also chooses the sandbox's subnet before boot — the highest free `/24`
 between `192.168.252.0/24` and `192.168.200.0/24`, skipping any range a host
 interface already uses — and passes it to the shim, which asks vmnet for exactly
 that. This is not cosmetic: macOS 26 ignores `com.apple.vmnet.plist` and gives
@@ -593,7 +605,7 @@ raw vmnet clients a hardcoded `192.168.2.0/24`, a range plenty of LANs are on.
   firewall restricts where the guest can *connect*, not what it can *ask to
   resolve*.
 - **Subnet collisions.** If the sandbox's subnet ends up on the same range as
-  your LAN, host connectivity breaks. pt picks an unused range before boot to
+  your LAN, host connectivity breaks. It picks an unused range before boot to
   avoid it, and re-checks after boot: on a collision it refuses with an
   explanation rather than leaving you with mysteriously broken networking.
 
@@ -604,7 +616,7 @@ Shares are Tart virtiofs directory shares (`tart run --dir=<name>:<hostPath>[:ro
 On a macOS guest they appear under `/Volumes/My Shared Files/<name>`, so the
 project is at `/Volumes/My Shared Files/project`.
 
-`pt shell` does not use SSH environment forwarding (sshd rejects unlisted
+`turtle shell` does not use SSH environment forwarding (sshd rejects unlisted
 `AcceptEnv` variables, silently). Instead it runs, in place of a bare login:
 
 ```sh
@@ -635,12 +647,12 @@ All shares appear as subdirectories of that one mount point, named by their
 com.apple.virtio-fs.automount /mnt/shared virtiofs defaults 0 0
 ```
 
-`pt` does not detect Linux guests and will not warn you; the design document's
+Plastic Turtle does not detect Linux guests and will not warn you; the design document's
 "print a hint if the login banner suggests Linux" is not implemented.
 
 ## SSH credentials
 
-`pt` logs into the guest as `admin` / `admin`, the Tart image convention. Both
+`turtle` logs into the guest as `admin` / `admin`, the Tart image convention. Both
 `password` and `keyboard-interactive` are offered, because sshd images differ in
 which one they advertise and a client offering only the wrong one fails with an
 opaque "no supported methods".
@@ -648,10 +660,10 @@ opaque "no supported methods".
 Override with environment variables:
 
 ```sh
-PT_SSH_USER=builder PT_SSH_PASSWORD=hunter2 pt shell
+PT_SSH_USER=builder PT_SSH_PASSWORD=hunter2 turtle shell
 ```
 
-An empty value is treated as unset — `PT_SSH_USER= pt shell` is far more likely
+An empty value is treated as unset — `PT_SSH_USER= turtle shell` is far more likely
 to be an accident than a request to log in as nobody.
 
 These are **deliberately not `.plasticturtle` fields.** That file is checked into
@@ -661,15 +673,15 @@ name the account it wants.
 
 ## Security notes
 
-**Host keys are not verified.** `pt` uses `ssh.InsecureIgnoreHostKey()`. The
-reasoning, from `internal/sshx/sshx.go`: these are ephemeral VMs that `pt` itself
-just cloned, reachable only over the local virtio network, with no stable
+**Host keys are not verified.** `turtle` uses `ssh.InsecureIgnoreHostKey()`. The
+reasoning, from `internal/sshx/sshx.go`: these are ephemeral VMs that Plastic Turtle
+itself just cloned, reachable only over the local virtio network, with no stable
 identity to pin — a `known_hosts` entry would be regenerated on every boot and
 would train the user to click through mismatches. The threat this drops is an
 attacker already on the host's virtio network impersonating a VM that exists for
 minutes, and that is not a threat this tool defends against.
 
-**The trust boundary is `pt allow`.** Everything downstream of it — which image,
+**The trust boundary is `turtle allow`.** Everything downstream of it — which image,
 which host directories in which mode, which host ports — is whatever the file
 said at the moment you approved it. Guest-side compromise is *outside* the
 boundary and expected; a config change is *inside* it and must be re-approved.
@@ -679,7 +691,7 @@ Read the summary. It is not a formality.
 ordinary guarantee is that guest-side compromise costs you the clone and nothing
 more, because the clone is destroyed minutes later. Boot the image itself and
 that stops being true: whatever the guest writes is in the image, and every
-later `pt shell` clones it forward. It is a command-line flag, not a config
+later `turtle shell` clones it forward. It is a command-line flag, not a config
 field, precisely so that a `.plasticturtle` can never ask for it — the decision
 is made by the person typing, per invocation. Use it for setup you intend, and
 go back to ephemeral shells afterwards.
@@ -715,14 +727,14 @@ would accept anyway.
         ├── instance.json              # the current instance record
         ├── heartbeat                  # mtime touched every 5 s by the supervisor
         ├── supervisor.log             # truncated at each boot
-        └── sessions/<session-id>.json # one per live pt shell
+        └── sessions/<session-id>.json # one per live turtle shell
 ```
 
 `<project-id>` is the first 16 hex characters of `sha256(canonical project
 path)`, and it is embedded in the VM name, so the easiest way to find a
-project's directory is to take the middle field of its `VM` column in `pt list`.
+project's directory is to take the middle field of its `VM` column in `turtle list`.
 
-There is no daemon. Every `pt` invocation reconstructs the world from these files
+There is no daemon. Every invocation reconstructs the world from these files
 plus PID liveness checks; every record that names a PID also records that
 process's start time, so a reused PID after a reboot is not mistaken for a live
 supervisor. Mutations happen under the project's exclusive `flock`, never held
@@ -734,7 +746,7 @@ across a prompt or a boot.
 
 `~/.local/state/plasticturtle/instances/<project-id>/supervisor.log` is the only
 record of a failed boot — the supervisor is detached and has no terminal. Every
-error `pt shell` prints for a boot failure names the path. `pt shell -v` prints
+error `turtle shell` prints for a boot failure names the path. `turtle shell -v` prints
 it too, on the create path. It is truncated at the start of each boot, so it
 always describes the most recent attempt.
 
@@ -742,36 +754,36 @@ It logs the clone, the resource override, the `tart run` child's pid, the DHCP
 address, when sshd started accepting, each forward and which guest address it
 chose, and the teardown reason.
 
-### What `pt list`'s STATE means
+### What `turtle list`'s STATE means
 
 | State | Meaning | What to do |
 |---|---|---|
 | `creating` | the supervisor is cloning/booting | wait; the boot timeout is 120 s |
 | `running` | booted, tunnels up, SSH available | — |
-| `stopping` | the last session exited; teardown in progress | wait; the next `pt shell` waits for `dead` on its own (up to 45 s) then makes a fresh VM |
-| `dead` | the record's supervisor process is gone | the next `pt shell`, `pt list`, or GC pass reclaims it |
+| `stopping` | the last session exited; teardown in progress | wait; the next `turtle shell` waits for `dead` on its own (up to 45 s) then makes a fresh VM |
+| `dead` | the record's supervisor process is gone | the next `turtle shell`, `turtle list`, or GC pass reclaims it |
 
-A row that says `running` with a `stale` status in `pt ports` is a supervisor
-whose heartbeat has aged past 15 s. `pt` deliberately does not kill it: a
+A row that says `running` with a `stale` status in `turtle ports` is a supervisor
+whose heartbeat has aged past 15 s. Plastic Turtle deliberately does not kill it: a
 live-but-wedged process's VM is not something a status command should destroy.
 
 ### Recovering a wedged instance
 
-Almost never necessary — `pt shell` and `pt list` both garbage-collect first —
+Almost never necessary — `turtle shell` and `turtle list` both garbage-collect first —
 but in order of escalation:
 
 ```sh
-pt list                     # runs a global GC pass, then reports
+turtle list                     # runs a global GC pass, then reports
 ```
 
 If the supervisor was killed (`kill -9`), the VM is orphaned but harmless: the
-next `pt shell` for that project notices the dead PID under the lock, force-stops
-and deletes the leftover clone, clears the state, and boots fresh. `pt list` and
+next `turtle shell` for that project notices the dead PID under the lock, force-stops
+and deletes the leftover clone, clears the state, and boots fresh. `turtle list` and
 its GC pass do the same without booting anything.
 
 An orphaned `--persist` instance is reclaimed the same way with one difference:
-GC stops the VM and stops there. The image is yours, so nothing in `pt` deletes
-it, and the record is kept until the VM really has stopped — that record is the
+GC stops the VM and stops there. The image is yours, so nothing in Plastic Turtle
+deletes it, and the record is kept until the VM really has stopped — that record is the
 only thing that says a VM is running with nobody watching it.
 
 If a supervisor is alive but wedged, GC will not touch it by design. Stop it
@@ -779,13 +791,13 @@ yourself, then let GC clean up:
 
 ```sh
 kill <supervisorPid>        # from instance.json; SIGTERM means "tear down now"
-pt list                     # reclaims the record and the clone
+turtle list                     # reclaims the record and the clone
 ```
 
 Last resort, if a clone survives everything above:
 
 ```sh
-tart list                   # pt clones are named pt-<16 hex>-<8 hex>
+tart list                   # clones are named pt-<16 hex>-<8 hex>
 tart stop --timeout 0 pt-<...>
 tart delete pt-<...>
 rm -rf ~/.local/state/plasticturtle/instances/<project-id>
@@ -795,14 +807,14 @@ rm -rf ~/.local/state/plasticturtle/instances/<project-id>
 
 | Symptom | Cause |
 |---|---|
-| `.plasticturtle has changed (or was never allowed)` | the bytes differ from what was allowed, or the project moved. Read the diff, then `pt allow` |
-| `no .plasticturtle found at or above <dir>` | not in a project; `pt init` |
-| `mount "x": host path ... does not exist` | a `host_path` is missing. `pt allow` warns about this; `pt shell` refuses |
+| `.plasticturtle has changed (or was never allowed)` | the bytes differ from what was allowed, or the project moved. Read the diff, then `turtle allow` |
+| `no .plasticturtle found at or above <dir>` | not in a project; `turtle init` |
+| `mount "x": host path ... does not exist` | a `host_path` is missing. `turtle allow` warns about this; `turtle shell` refuses |
 | `the VM did not become ready within 2m0s` | image still pulling, or the guest never got a DHCP lease. Check the log; pre-`tart pull` the image |
 | `VM terminated unexpectedly; see .../supervisor.log` | the `tart run` child exited under a live session |
-| a stray `pt-*` VM in `tart list` | run `pt list`; the orphan sweep deletes `pt-*` VMs no record claims |
-| backspace does not erase, arrow keys print escapes | the guest could not be taught your `TERM` and fell back. Check `infocmp "$TERM"` inside the guest; a guest image without `tic` cannot be taught one. `TERM=xterm-256color pt shell` sidesteps it |
-| `DISK*` shows ~30G for a VM that just booted | expected. See [`pt list`](#pt-list) |
+| a stray `pt-*` VM in `tart list` | run `turtle list`; the orphan sweep deletes `pt-*` VMs no record claims |
+| backspace does not erase, arrow keys print escapes | the guest could not be taught your `TERM` and fell back. Check `infocmp "$TERM"` inside the guest; a guest image without `tic` cannot be taught one. `TERM=xterm-256color turtle shell` sidesteps it |
+| `DISK*` shows ~30G for a VM that just booted | expected. See [`turtle list`](#turtle-list) |
 
 ## License
 

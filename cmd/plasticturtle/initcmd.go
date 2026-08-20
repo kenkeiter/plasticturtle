@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/kenkeiter/plasticturtle/internal/config"
+	"github.com/kenkeiter/plasticturtle/internal/progname"
 	"github.com/kenkeiter/plasticturtle/internal/tart"
 )
 
@@ -28,7 +29,7 @@ const customImageSentinel = "\x00enter-a-reference"
 // runInit writes a .plasticturtle interactively and records trust in it.
 //
 // The file it produces is trusted without a confirmation prompt: the user just
-// authored it, answering every question that pt allow would have asked. Asking
+// authored it, answering every question that plasticturtle allow would have asked. Asking
 // them to re-approve their own answers would teach them that the trust prompt
 // is a formality.
 func runInit(e *env, path string, out io.Writer, interactive bool) error {
@@ -39,7 +40,7 @@ func runInit(e *env, path string, out io.Writer, interactive bool) error {
 	target := filepath.Join(dir, config.FileName)
 
 	if _, err := os.Stat(target); err == nil {
-		return fmt.Errorf("%s already exists\nedit it, then run: pt allow", target)
+		return fmt.Errorf("%s already exists\nedit it, then run: %s allow", target, progname.Get())
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat %s: %w", target, err)
 	}
@@ -47,7 +48,7 @@ func runInit(e *env, path string, out io.Writer, interactive bool) error {
 	if !interactive {
 		// Every question below needs an answer. Hanging on a read that will
 		// never come is worse than saying so.
-		return fmt.Errorf("pt init is interactive; run it from a terminal")
+		return fmt.Errorf("%s init is interactive; run it from a terminal", progname.Get())
 	}
 
 	image, err := pickImage(e)
@@ -82,8 +83,8 @@ func runInit(e *env, path string, out io.Writer, interactive bool) error {
 	}
 
 	fmt.Fprintf(out, "Wrote %s and allowed it.\n\n", target)
-	fmt.Fprintf(out, "Next: pt shell\n")
-	fmt.Fprintf(out, "Tip:  add `source <(pt zsh-hook)` to ~/.zshrc for a trust warning and prompt marker.\n")
+	fmt.Fprintf(out, "Next: %s shell\n", progname.Get())
+	fmt.Fprintf(out, "Tip:  add `source <(%s zsh-hook)` to ~/.zshrc for a trust warning and prompt marker.\n", progname.Get())
 	return nil
 }
 
@@ -173,7 +174,7 @@ func availableImages(e *env) []string {
 	vms, err := e.Tart.List(ctx)
 	if err != nil {
 		// A missing or broken tart is not a reason to refuse to write a config;
-		// the user can still type a reference and find out at pt shell time.
+		// the user can still type a reference and find out at plasticturtle shell time.
 		return nil
 	}
 	var names []string

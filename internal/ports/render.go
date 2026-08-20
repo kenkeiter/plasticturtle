@@ -9,7 +9,7 @@ import (
 
 // jsonRow is the wire form of Row.
 //
-// It exists so that the JSON emitted by `pt ports --json` is a stable,
+// It exists so that the JSON emitted by `plasticturtle ports --json` is a stable,
 // documented interface with lower-camel field names, rather than whatever Go
 // field names happen to be called this week. Every exported field of Row must
 // appear here; a test enforces that by reflection, because a new field that
@@ -35,7 +35,7 @@ func Render(w io.Writer, rows []Row, global, jsonOut bool) error {
 }
 
 // renderJSON always emits an array, never null: a script doing
-// `pt ports --json | jq '.[]'` must not have to special-case the empty case.
+// `plasticturtle ports --json | jq '.[]'` must not have to special-case the empty case.
 func renderJSON(w io.Writer, rows []Row) error {
 	out := make([]jsonRow, 0, len(rows))
 	for _, r := range rows {

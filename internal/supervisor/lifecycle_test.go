@@ -129,7 +129,7 @@ func TestHeartbeatKeepsBeating(t *testing.T) {
 }
 
 // TestSessionReturnsWithinDebounce is the reason the debounce exists: `exit &&
-// pt shell` must not destroy the VM it is re-entering.
+// plasticturtle shell` must not destroy the VM it is re-entering.
 func TestSessionReturnsWithinDebounce(t *testing.T) {
 	h := newHarness(t)
 	h.writeCreating()
@@ -165,7 +165,7 @@ func TestSessionReturnsWithinDebounce(t *testing.T) {
 
 // TestVMDiesUnexpectedly covers spec §6.3 step 5. The state files are kept on
 // purpose: supervisor.log is the only explanation the user will get, and the
-// record in state dead is what a waiting pt shell reads.
+// record in state dead is what a waiting plasticturtle shell reads.
 func TestVMDiesUnexpectedly(t *testing.T) {
 	h := newHarness(t)
 	h.writeCreating()

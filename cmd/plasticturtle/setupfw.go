@@ -1,13 +1,13 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 
+	"github.com/kenkeiter/plasticturtle/internal/progname"
 	"github.com/kenkeiter/plasticturtle/internal/state"
 	"github.com/kenkeiter/plasticturtle/internal/supervisor"
 )
@@ -74,7 +74,7 @@ func runSetupFirewall(store *state.Store, shimSrc string, out io.Writer, priv pr
 func verifyShim(path string) error { return supervisor.VerifyShim(path) }
 
 // locateShimBinary finds the shim to install: an explicit path wins, then
-// PT_SHIM_BIN, then a binary named pt-softnet-shim next to the running pt.
+// PT_SHIM_BIN, then a binary named plasticturtle-softnet-shim next to the running pt.
 func locateShimBinary(explicit string) (string, error) {
 	candidates := []string{}
 	if explicit != "" {
@@ -84,15 +84,15 @@ func locateShimBinary(explicit string) (string, error) {
 		candidates = append(candidates, env)
 	}
 	if self, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(self), "pt-softnet-shim"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(self), "plasticturtle-softnet-shim"))
 	}
 	for _, c := range candidates {
 		if fi, err := os.Stat(c); err == nil && fi.Mode().IsRegular() {
 			return c, nil
 		}
 	}
-	return "", errors.New("could not find the pt-softnet-shim binary; build it with `make build` " +
-		"and keep it next to pt, or pass --shim <path>")
+	return "", fmt.Errorf("could not find the plasticturtle-softnet-shim binary; build it with `make build` "+
+		"and keep it next to %s, or pass --shim <path>", progname.Get())
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {

@@ -63,7 +63,7 @@ func (c *Client) negotiateTerm(ctx context.Context, hostTerm string) string {
 		return hostTerm
 	}
 
-	// Bounded separately from the session's context, which for pt shell lasts
+	// Bounded separately from the session's context, which for plasticturtle shell lasts
 	// as long as the user's shell does. Everything behind this timeout is an
 	// improvement on a working fallback, and none of it is worth delaying a
 	// prompt for.

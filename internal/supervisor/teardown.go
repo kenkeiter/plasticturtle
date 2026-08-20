@@ -14,7 +14,7 @@ import (
 // watchSessions tears the instance down once the session set has been empty
 // for ptcfg.SessionEmptyDebounce.
 //
-// The debounce is what makes `exit && pt shell` work: for those few hundred
+// The debounce is what makes `exit && plasticturtle shell` work: for those few hundred
 // milliseconds there is genuinely nobody attached, and without it the VM the
 // user is re-entering would be destroyed underneath them. It is measured from
 // the first observation of an empty set and re-checked at its end, so a session
@@ -83,7 +83,7 @@ func (r *run) liveSessions() (int, error) {
 // claimIdle publishes state stopping in the same lock hold that confirms the
 // session set is empty, and reports whether it did.
 //
-// Splitting those two would leave a window in which a pt shell takes the lock,
+// Splitting those two would leave a window in which a plasticturtle shell takes the lock,
 // reads state running, and registers a session against a VM this supervisor
 // has already decided to destroy. Marking stopping under the same lock closes
 // it: a shell arriving one instant later sees stopping and waits for dead
@@ -164,7 +164,7 @@ func (r *run) tearDownOnce(parent context.Context) {
 	released := r.releaseVM(ctx)
 
 	// Spec §6.3 step 6: remove the state files only if the VM really was
-	// released. A record that outlives its VM is what lets the next pt shell
+	// released. A record that outlives its VM is what lets the next plasticturtle shell
 	// (or GC) find and finish the job; removing the record first would leave
 	// the VM under a name nothing remembers.
 	if released && r.stopKind.removesState() {
@@ -224,7 +224,7 @@ func (r *run) forceStop(ctx context.Context) {
 // The two ownership models part company here. A clone is pt's, so releasing it
 // means deleting it. A persistent VM is the user's, so releasing it means
 // nothing more than having stopped it — but that much is required, because the
-// instance record is the only thing that would tell the next pt shell, or GC,
+// instance record is the only thing that would tell the next plasticturtle shell, or GC,
 // that a VM is still running with nobody supervising it.
 func (r *run) releaseVM(ctx context.Context) bool {
 	if !r.p.Persist {

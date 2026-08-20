@@ -1,6 +1,6 @@
-// Package ports resolves host-port conflicts and renders the pt ports table.
+// Package ports resolves host-port conflicts and renders the plasticturtle ports table.
 //
-// Conflict resolution happens in the interactive pt shell, never in the
+// Conflict resolution happens in the interactive plasticturtle shell, never in the
 // supervisor: the supervisor is detached and has no terminal to prompt on. The
 // shell binds each port to prove it is free, hands the resolved list to the
 // supervisor, and releases the probes just before spawning it.
@@ -60,7 +60,7 @@ type Probes []net.Listener
 
 // Close releases every held probe.
 //
-// Closing twice is not an error: pt shell defers Close for the failure paths
+// Closing twice is not an error: plasticturtle shell defers Close for the failure paths
 // and also calls it explicitly on the success path, immediately before the
 // spawn. A second close must not turn a working boot into a reported failure.
 func (p Probes) Close() error {
@@ -82,7 +82,7 @@ func (p Probes) Close() error {
 // user, accepting the proposal on a bare Enter and re-prompting if the typed
 // port is also taken.
 //
-// The resolved list is recorded in instance.json for pt ports to display. It
+// The resolved list is recorded in instance.json for plasticturtle ports to display. It
 // is never written back to .plasticturtle: that would change the file's bytes
 // and invalidate its trust hash, turning a port collision into a security
 // prompt.
@@ -167,7 +167,7 @@ func negotiateOne(ctx context.Context, in *bufio.Reader, out io.Writer, w config
 	proposed := portOf(proposal)
 
 	if in == nil {
-		// No TTY. Reading an answer that is never coming would hang pt shell
+		// No TTY. Reading an answer that is never coming would hang plasticturtle shell
 		// forever in a script or a CI run, so the automatic port is taken and
 		// reported rather than offered.
 		fmt.Fprintf(out, "Port %d is %s.\nForwarding VM port %d to host port %d instead.\n", w.HostPort, reason, w.VMPort, proposed)

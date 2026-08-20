@@ -15,7 +15,7 @@ import (
 
 // runSupervise is the detached supervisor's entry point.
 //
-// Its stdout and stderr are already pointed at supervisor.log by the pt shell
+// Its stdout and stderr are already pointed at supervisor.log by the plasticturtle shell
 // that spawned it, so writing to out is writing to the log. There is no
 // terminal on the other end of anything here: this process must never prompt,
 // and its log is the only diagnosis a user gets for a failed boot.

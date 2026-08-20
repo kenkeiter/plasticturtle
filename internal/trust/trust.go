@@ -1,4 +1,4 @@
-// Package trust implements the pt allow database.
+// Package trust implements the plasticturtle allow database.
 //
 // A .plasticturtle is inert until its exact bytes have been approved for its
 // exact canonical path. This package is the whole enforcement mechanism, so it
@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+
+	"github.com/kenkeiter/plasticturtle/internal/progname"
 )
 
 // FileName is the trust database, stored in the state root.
@@ -28,7 +30,7 @@ type Record struct {
 	Hash string `json:"hash"`
 	// AllowedAt is when the user approved it.
 	AllowedAt time.Time `json:"allowedAt"`
-	// Raw is the exact bytes the user approved, kept so that a later pt allow
+	// Raw is the exact bytes the user approved, kept so that a later plasticturtle allow
 	// can show what changed rather than re-reading a summary the user has
 	// already read. It is advisory, never authoritative: Hash alone decides
 	// trust, and Raw is absent for records written by older versions or for
@@ -50,12 +52,12 @@ type Store interface {
 
 	// Allow records approval of hash for projectPath, replacing any prior
 	// entry. Writes are atomic (temp file + rename) under an exclusive lock on
-	// a sidecar file, so concurrent pt allow runs cannot lose each other's
+	// a sidecar file, so concurrent plasticturtle allow runs cannot lose each other's
 	// entries. The lock is deliberately not on the database itself; see
 	// lockSuffix for why locking an inode that rename replaces is unsound.
 	//
 	// raw is the file contents hash was computed from, snapshotted into the
-	// record so a later pt allow can diff against what was approved. It may be
+	// record so a later plasticturtle allow can diff against what was approved. It may be
 	// nil, but if it is not, it must hash to hash — a snapshot that disagrees
 	// with the hash would make the next diff describe a grant nobody approved.
 	Allow(projectPath, hash string, raw []byte, now time.Time) error
@@ -66,7 +68,7 @@ const (
 	// thing standing between a hostile .plasticturtle and a booted VM, so a
 	// group- or world-writable parent directory would defeat the whole model.
 	dirPerm fs.FileMode = 0o700
-	// filePerm matches: readable for `pt _check-trust`, writable only by owner.
+	// filePerm matches: readable for `plasticturtle _check-trust`, writable only by owner.
 	filePerm fs.FileMode = 0o600
 
 	// maxSnapshot caps the config bytes stored in a record. A .plasticturtle is
@@ -150,7 +152,7 @@ func (s *fileStore) Allow(projectPath, hash string, raw []byte, now time.Time) e
 		return errors.New("trust: empty hash")
 	}
 	// A snapshot that does not hash to the approved hash is worse than no
-	// snapshot: the next pt allow would diff against bytes the user never
+	// snapshot: the next plasticturtle allow would diff against bytes the user never
 	// approved and could report "nothing changed" about a config that did.
 	if len(raw) > 0 && hashBytes(raw) != hash {
 		return errors.New("trust: config snapshot does not match its hash")
@@ -166,7 +168,7 @@ func (s *fileStore) Allow(projectPath, hash string, raw []byte, now time.Time) e
 	defer lock.Unlock() //nolint:errcheck // unlocking is best-effort; the process is exiting either way.
 
 	// Read-modify-write must happen entirely inside the lock, otherwise two
-	// concurrent `pt allow` runs both read the old database and the second
+	// concurrent `plasticturtle allow` runs both read the old database and the second
 	// rename silently drops the first one's entry.
 	db, err := s.load()
 	if err != nil {
@@ -203,7 +205,7 @@ func (s *fileStore) load() (map[string]Record, error) {
 	// tolerating fields a future pt version adds is friendlier than refusing to
 	// start after a downgrade. Unknown *keys* cannot exist — keys are paths.
 	if err := json.Unmarshal(raw, &db); err != nil {
-		return nil, fmt.Errorf("trust: %s is corrupt (%v); inspect it, or delete it and re-run pt allow", s.path, err)
+		return nil, fmt.Errorf("trust: %s is corrupt (%v); inspect it, or delete it and re-run %s allow", s.path, err, progname.Get())
 	}
 	return db, nil
 }

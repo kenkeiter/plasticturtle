@@ -107,7 +107,7 @@ func TestAllowSaysWhenAnEditGrantsNothingNew(t *testing.T) {
 	project := newProject(t, sampleConfig)
 	allowOnce(t, e, project)
 
-	// The hash changes, so trust lapses and pt allow must still prompt — but
+	// The hash changes, so trust lapses and plasticturtle allow must still prompt — but
 	// the user deserves to be told the edit was inert.
 	rewriteConfig(t, project, sampleConfig+"# a comment\n")
 

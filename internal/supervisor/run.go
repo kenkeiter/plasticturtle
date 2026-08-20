@@ -23,7 +23,7 @@ import (
 // A deliberate shutdown leaves nothing worth reading, so its state files go.
 // A VM that died on its own, or one that never booted, leaves a supervisor.log
 // that is the only explanation the user will ever get — and an instance record
-// in state dead, which is what tells a pt shell still waiting on this instance
+// in state dead, which is what tells a plasticturtle shell still waiting on this instance
 // that it is not coming.
 type stopKind int
 
@@ -193,7 +193,7 @@ func (r *run) execute(ctx context.Context) error {
 // claim takes ownership of the project's instance record: it records this
 // process as the supervisor and confirms nobody else already is.
 //
-// pt shell writes the record before spawning us and fills in our PID as soon
+// plasticturtle shell writes the record before spawning us and fills in our PID as soon
 // as the spawn returns (so that garbage collection has something to check),
 // but that write races this one and cannot know our start ticks. Writing them
 // from inside the process that owns them is what closes the window where a
@@ -232,7 +232,7 @@ func (r *run) claim() error {
 }
 
 // publish moves the instance to running with the address the tunnels are
-// using. This is the transition a waiting pt shell is polling for, so nothing
+// using. This is the transition a waiting plasticturtle shell is polling for, so nothing
 // may set it before every forward is actually listening.
 func (r *run) publish() error {
 	r.published = true
@@ -271,7 +271,7 @@ func (r *run) withInstance(mutate func(*state.Instance) error) error {
 		return fmt.Errorf("supervisor: read instance record: %w", err)
 	}
 	if inst == nil {
-		// The record is normally written by pt shell before we are spawned.
+		// The record is normally written by plasticturtle shell before we are spawned.
 		// Rebuilding it from the parameters rather than failing keeps a VM we
 		// may already have booted nameable — an instance record is the only
 		// thing that stops garbage collection treating a clone as an orphan.
@@ -317,7 +317,7 @@ func (r *run) heartbeat(done <-chan struct{}) {
 
 func (r *run) beat() {
 	if err := r.d.Store.Heartbeat(r.p.ProjectID); err != nil {
-		// A missed beat degrades pt list to "stale" and nothing more, so it is
+		// A missed beat degrades plasticturtle list to "stale" and nothing more, so it is
 		// reported and not escalated: tearing a healthy VM down because a file
 		// timestamp could not be written would be a far worse trade.
 		r.logf("heartbeat: %v", err)
@@ -336,7 +336,7 @@ func (r *run) watchSignals(ctx context.Context, sigCh <-chan os.Signal) {
 	}
 }
 
-// portMaps converts the resolved forwards into the on-disk shape pt ports
+// portMaps converts the resolved forwards into the on-disk shape plasticturtle ports
 // renders.
 func portMaps(resolved []ports.Resolved) []state.PortMap {
 	out := make([]state.PortMap, 0, len(resolved))

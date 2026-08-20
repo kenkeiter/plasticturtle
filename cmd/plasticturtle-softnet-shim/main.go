@@ -1,4 +1,4 @@
-// Command pt-softnet-shim is Plastic Turtle's domain firewall and the sandbox's
+// Command plasticturtle-softnet-shim is Plastic Turtle's domain firewall and the sandbox's
 // entire software-networking layer, packaged as a drop-in replacement for the
 // `softnet` binary that Tart spawns.
 //
@@ -43,7 +43,7 @@ func main() {
 
 	if err := run(lg); err != nil {
 		lg.printf("fatal: %v", err)
-		fmt.Fprintln(os.Stderr, "pt-softnet-shim:", err)
+		fmt.Fprintln(os.Stderr, "plasticturtle-softnet-shim:", err)
 		os.Exit(1)
 	}
 }
@@ -66,7 +66,7 @@ func run(lg *logger) error {
 	link, err := vmnetlink.Open(vmnetlink.Config{Subnet: subnet, Isolation: true})
 	if err != nil {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("%w\nthe shim must be installed setuid-root; run `pt setup`", err)
+			return fmt.Errorf("%w\nthe shim must be installed setuid-root; run `plasticturtle setup`", err)
 		}
 		return err
 	}

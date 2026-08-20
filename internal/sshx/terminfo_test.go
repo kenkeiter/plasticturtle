@@ -193,7 +193,7 @@ func TestNegotiateTermFallsBackWhenHostCannotDescribeIt(t *testing.T) {
 
 // TestNegotiateTermSkipsTheRoundTripForSafeNames pins the two cases that must
 // not cost a probe: no TERM at all, and a TERM that is already the fallback.
-// pt shell pays this on every session, so "no work to do" has to mean no work.
+// plasticturtle shell pays this on every session, so "no work to do" has to mean no work.
 func TestNegotiateTermSkipsTheRoundTripForSafeNames(t *testing.T) {
 	t.Parallel()
 

@@ -100,7 +100,7 @@ func (w *world) allow() {
 	w.t.Helper()
 	out, code := w.cmd("y\n", "allow", w.project)
 	if code != 0 {
-		w.t.Fatalf("pt allow failed (%d):\n%s", code, out)
+		w.t.Fatalf("plasticturtle allow failed (%d):\n%s", code, out)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestEndToEnd(t *testing.T) {
 
 	out, code := w.shell(script)
 	if code != 0 {
-		t.Fatalf("pt shell exited %d:\n%s\n\nsupervisor.log:\n%s", code, out, w.supervisorLog())
+		t.Fatalf("plasticturtle shell exited %d:\n%s\n\nsupervisor.log:\n%s", code, out, w.supervisorLog())
 	}
 
 	// The login preamble must land the user in the project share, not $HOME.
@@ -243,13 +243,13 @@ func TestEndToEnd(t *testing.T) {
 	})
 }
 
-// TestExitCodeIsMirrored covers spec section 9: pt shell exits with the remote
+// TestExitCodeIsMirrored covers spec section 9: plasticturtle shell exits with the remote
 // shell's status, so a script driving pt can tell whether the work succeeded.
 func TestExitCodeIsMirrored(t *testing.T) {
 	w := newWorld(t, basicConfig)
 	out, code := w.shell("exit 42\n")
 	if code != 42 {
-		t.Errorf("pt shell exited %d, want 42:\n%s", code, out)
+		t.Errorf("plasticturtle shell exited %d, want 42:\n%s", code, out)
 	}
 }
 
@@ -298,7 +298,7 @@ ports:
 }
 
 // TestConcurrentShellsShareOneInstance covers the design's shared-instance
-// rule: a second pt shell must attach, not boot a second VM.
+// rule: a second plasticturtle shell must attach, not boot a second VM.
 func TestConcurrentShellsShareOneInstance(t *testing.T) {
 	w := newWorld(t, basicConfig)
 
@@ -333,7 +333,7 @@ func TestConcurrentShellsShareOneInstance(t *testing.T) {
 
 // TestRecoversFromKilledSupervisor covers the crash-safety backstop in spec
 // section 6.3: a supervisor that dies without cleaning up leaves an orphaned VM
-// and a stale record, and the next pt shell must reclaim both.
+// and a stale record, and the next plasticturtle shell must reclaim both.
 func TestRecoversFromKilledSupervisor(t *testing.T) {
 	w := newWorld(t, basicConfig)
 
@@ -383,7 +383,7 @@ func TestRecoversFromKilledSupervisor(t *testing.T) {
 	}
 	if !orphaned {
 		t.Fatalf("VM %s vanished the instant its supervisor was killed; "+
-			"a SIGKILLed supervisor is supposed to leave it running for the next pt shell to reclaim", orphan)
+			"a SIGKILLed supervisor is supposed to leave it running for the next plasticturtle shell to reclaim", orphan)
 	}
 	<-done
 
@@ -414,7 +414,7 @@ func TestUntrustedConfigRefusesToBoot(t *testing.T) {
 
 	out, code := w.shell("echo should-not-run\n")
 	if code == 0 {
-		t.Errorf("pt shell booted an unallowed config:\n%s", out)
+		t.Errorf("plasticturtle shell booted an unallowed config:\n%s", out)
 	}
 	if strings.Contains(out, "should-not-run") {
 		t.Errorf("the guest ran despite the config being untrusted:\n%s", out)

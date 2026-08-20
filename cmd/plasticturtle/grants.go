@@ -12,7 +12,7 @@ import (
 // host directory it exposes, a port it opens, the egress it permits.
 //
 // Grants exist so that "what does this config give away" is computed in exactly
-// one place. Both the approval summary and the change list that pt allow shows
+// one place. Both the approval summary and the change list that plasticturtle allow shows
 // on re-approval are rendered from the same slice, so a config field can never
 // be summarized but not diffed (or the reverse) — which would let a change slip
 // past the user unmentioned.
@@ -156,7 +156,7 @@ func normalizedAllow(n *config.Network) []string {
 	for _, pat := range n.Allow {
 		norm, err := config.NormalizeDomainPattern(pat)
 		if err != nil {
-			// Validation rejects these before pt allow prompts; a snapshot from
+			// Validation rejects these before plasticturtle allow prompts; a snapshot from
 			// an older pt might still contain one. Show it as written rather
 			// than hiding a rule the user may have believed was in force.
 			norm = pat

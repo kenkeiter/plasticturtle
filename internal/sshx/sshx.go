@@ -42,7 +42,7 @@ type Credentials struct {
 // applied.
 func DefaultCredentials() Credentials {
 	c := Credentials{User: DefaultUser, Password: DefaultPassword}
-	// An empty env var is treated as unset: `PT_SSH_USER= pt shell` is far
+	// An empty env var is treated as unset: `PT_SSH_USER= plasticturtle shell` is far
 	// more likely to be an accident than a request to log in as nobody.
 	if v := os.Getenv(EnvUser); v != "" {
 		c.User = v
@@ -232,7 +232,7 @@ func ProbeTCP(ctx context.Context, addr string) error {
 	return conn.Close()
 }
 
-// LoginCommand builds the preamble pt shell runs in place of a bare login: it
+// LoginCommand builds the preamble plasticturtle shell runs in place of a bare login: it
 // lands the user in the project share when one exists, marks the session so
 // nested tooling can detect it, and then execs the guest's own login shell.
 //

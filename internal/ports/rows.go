@@ -13,7 +13,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/state"
 )
 
-// Status is a forward's live state, as shown by pt ports.
+// Status is a forward's live state, as shown by plasticturtle ports.
 type Status string
 
 const (
@@ -29,7 +29,7 @@ const (
 	StatusStale Status = "stale"
 )
 
-// Row is one line of the pt ports table.
+// Row is one line of the plasticturtle ports table.
 type Row struct {
 	// ProjectPath is set only in --global mode, where rows are grouped by
 	// project.
@@ -89,7 +89,7 @@ func Rows(cfg *config.Resolved, inst *state.Instance, healthy bool) []Row {
 // annotating host ports claimed by more than one project.
 //
 // Projects whose lock is held are skipped rather than waited on; a status
-// command must never block behind somebody else's pt shell. The consequence is
+// command must never block behind somebody else's plasticturtle shell. The consequence is
 // that --global reports what it could see, not necessarily everything.
 func GlobalRows(ctx context.Context, s *state.Store) ([]Row, error) {
 	if s == nil {

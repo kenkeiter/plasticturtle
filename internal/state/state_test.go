@@ -627,7 +627,7 @@ func TestUnlockIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestConcurrentSessionChurn is the shape of N `pt shell` processes attaching
+// TestConcurrentSessionChurn is the shape of N `plasticturtle shell` processes attaching
 // to and leaving one instance at once.
 func TestConcurrentSessionChurn(t *testing.T) {
 	s := newTestStore(t)

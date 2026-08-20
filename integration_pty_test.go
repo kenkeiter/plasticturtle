@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// This file covers the one part of pt shell that only appears when its stdin is
+// This file covers the one part of plasticturtle shell that only appears when its stdin is
 // a real terminal: PTY negotiation. Everything in integration_test.go drives pt
 // through a pipe, which requests no PTY at all, so none of it can see a broken
 // TERM or a wrong erase character.
@@ -112,7 +112,7 @@ func hostOnlyTerm(t *testing.T) (term, dir string) {
 	return term, dir
 }
 
-// shellOnPTY runs pt shell with a real terminal on its stdin, so that it
+// shellOnPTY runs plasticturtle shell with a real terminal on its stdin, so that it
 // negotiates a PTY, and feeds script to the guest's shell through that
 // terminal. It returns everything the terminal saw.
 func (w *world) shellOnPTY(term, terminfoDir, script string) string {
@@ -169,7 +169,7 @@ func (w *world) shellOnPTY(term, terminfoDir, script string) string {
 	}()
 
 	if err := c.Start(); err != nil {
-		w.t.Fatalf("start pt shell: %v", err)
+		w.t.Fatalf("start plasticturtle shell: %v", err)
 	}
 	exited := make(chan struct{})
 	go func() { defer close(exited); _ = c.Wait() }()
@@ -214,7 +214,7 @@ func (w *world) shellOnPTY(term, terminfoDir, script string) string {
 	select {
 	case <-exited:
 	case <-time.After(2 * time.Minute):
-		abandon("pt shell never exited after the script was typed")
+		abandon("plasticturtle shell never exited after the script was typed")
 	}
 
 	// Let the drain finish what is still in the buffer.

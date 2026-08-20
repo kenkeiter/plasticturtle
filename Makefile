@@ -1,8 +1,8 @@
 GO ?= go
-BIN := bin/pt
-SHIM := bin/pt-softnet-shim
+BIN := bin/plasticturtle
+SHIM := bin/plasticturtle-softnet-shim
 
-# Stamped into the binary so `pt --version` reports something traceable rather
+# Stamped into the binary so `plasticturtle --version` reports something traceable rather
 # than the literal string "dev".
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -30,11 +30,11 @@ build: $(BIN) $(SHIM)
 # installs the shim it finds next to itself.
 .PHONY: $(BIN)
 $(BIN):
-	$(GO) build $(LDFLAGS) -o $(BIN) ./cmd/pt
+	$(GO) build $(LDFLAGS) -o $(BIN) ./cmd/plasticturtle
 
 .PHONY: $(SHIM)
 $(SHIM):
-	$(GO) build $(LDFLAGS) -o $(SHIM) ./cmd/pt-softnet-shim
+	$(GO) build $(LDFLAGS) -o $(SHIM) ./cmd/plasticturtle-softnet-shim
 
 .PHONY: test
 test:

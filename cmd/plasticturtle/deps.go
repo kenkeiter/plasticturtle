@@ -64,7 +64,7 @@ type project struct {
 //
 // resolveErr is returned separately rather than as a failure: a config can be
 // entirely valid and still name a mount source that does not exist yet, which
-// pt allow wants to warn about rather than refuse.
+// plasticturtle allow wants to warn about rather than refuse.
 func loadProject(path string) (p *project, resolveErr error, err error) {
 	if path == "" {
 		wd, werr := os.Getwd()

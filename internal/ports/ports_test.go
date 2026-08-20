@@ -335,7 +335,7 @@ func TestProbesCloseReleasesEveryPort(t *testing.T) {
 		}
 		_ = ln.Close()
 	}
-	// Closing twice is a no-op, because pt shell both defers and calls it.
+	// Closing twice is a no-op, because plasticturtle shell both defers and calls it.
 	if err := probes.Close(); err != nil {
 		t.Fatalf("second Probes.Close: %v", err)
 	}

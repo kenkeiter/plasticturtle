@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kenkeiter/plasticturtle/internal/config"
+	"github.com/kenkeiter/plasticturtle/internal/progname"
 	"github.com/kenkeiter/plasticturtle/internal/ptcfg"
 	"github.com/kenkeiter/plasticturtle/internal/sshx"
 	"github.com/kenkeiter/plasticturtle/internal/sys"
@@ -243,7 +244,7 @@ func (r *run) sleep(ctx context.Context, d time.Duration) error {
 //
 // A forward that cannot be established fails the boot. The alternative —
 // running without it — would leave instance.json advertising a port that
-// nothing is listening on, so pt ports would report a forward that silently
+// nothing is listening on, so plasticturtle ports would report a forward that silently
 // is not there.
 func (r *run) openTunnels(ctx context.Context) error {
 	for _, f := range r.p.Ports {
@@ -252,7 +253,7 @@ func (r *run) openTunnels(ctx context.Context) error {
 
 		_, err := r.sshc.ForwardAny(ctx, hostAddr, remote, r.d.Logf)
 		if err != nil {
-			// pt shell released its probe listener microseconds before spawning
+			// plasticturtle shell released its probe listener microseconds before spawning
 			// us, so a bind failure here is most likely somebody else winning
 			// that gap. One retry costs a quarter second and covers it.
 			r.logf("forward %s: %v; retrying once", hostAddr, err)
@@ -292,13 +293,13 @@ func guestAddrs(vmIP string, vmPort int) []string {
 
 // checkMounts re-verifies every share's host path.
 //
-// pt shell checked these already and reported them on a terminal, which is the
+// plasticturtle shell checked these already and reported them on a terminal, which is the
 // error message that matters. This second check is defense in depth: the
 // supervisor is what hands the paths to tart, and a directory that disappeared
 // between the two would otherwise become a confusing tart failure.
 // checkTrust refuses to boot a config the user never approved.
 //
-// pt shell already made this check, and anyone who can invoke `pt _supervise`
+// plasticturtle shell already made this check, and anyone who can invoke `plasticturtle _supervise`
 // can invoke `tart` directly — so this grants no new capability and is not a
 // security boundary. It is here so that the trust decision is layered rather
 // than made in exactly one place: _supervise takes a full config (image,
@@ -312,8 +313,8 @@ func guestAddrs(vmIP string, vmPort int) []string {
 // allows.
 //
 // One benign race remains: re-allowing an edited config in the moment between
-// pt shell's check and this one leaves the old hash no longer in the database,
-// and this boot is refused. The next pt shell succeeds.
+// plasticturtle shell's check and this one leaves the old hash no longer in the database,
+// and this boot is refused. The next plasticturtle shell succeeds.
 func (r *run) checkTrust() error {
 	if r.d.Trust == nil {
 		return errors.New("supervisor: no trust database")
@@ -324,7 +325,7 @@ func (r *run) checkTrust() error {
 		return fmt.Errorf("supervisor: check trust for %s: %w", path, err)
 	}
 	if !allowed {
-		return fmt.Errorf("supervisor: refusing to boot %s: its config is not allowed (%s); run: pt allow", path, r.p.ConfigHash)
+		return fmt.Errorf("supervisor: refusing to boot %s: its config is not allowed (%s); run: %s allow", path, r.p.ConfigHash, progname.Get())
 	}
 	return nil
 }

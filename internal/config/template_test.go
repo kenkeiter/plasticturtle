@@ -42,7 +42,7 @@ func TestTemplateRoundTrip(t *testing.T) {
 			cfg:  &Config{Version: 1, Image: "ghcr.io/cirruslabs/macos-tahoe-base:latest"},
 		},
 		{
-			name: "version left unset by pt init",
+			name: "version left unset by plasticturtle init",
 			cfg:  &Config{Image: "tahoe-base"},
 		},
 		{
@@ -133,7 +133,7 @@ func TestTemplateComments(t *testing.T) {
 	// The comments are the deliverable: this file is meant to be edited by hand
 	// afterwards, so the rules that are not obvious from the keys must be there.
 	for _, want := range []string{
-		"pt allow",
+		"plasticturtle allow",
 		"2026-08-18T09:00:00Z",
 		GuestProjectPath(),
 		"~",

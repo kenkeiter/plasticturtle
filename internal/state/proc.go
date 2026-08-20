@@ -32,7 +32,7 @@ const sZomb = 5
 // procCommandTimeout bounds the helper subprocesses below. It is not a
 // protocol timeout — nothing in the design's timing depends on its value, so
 // it does not belong in ptcfg. It exists only so that a wedged filesystem
-// cannot hang `pt list` indefinitely.
+// cannot hang `plasticturtle list` indefinitely.
 const procCommandTimeout = 10 * time.Second
 
 // ProcStart returns the process start time for pid, as microseconds since the
@@ -88,7 +88,7 @@ func Alive(pid int, start uint64) bool {
 	return actual == start
 }
 
-// ProcStats is resource usage for a process tree, used by pt list.
+// ProcStats is resource usage for a process tree, used by plasticturtle list.
 type ProcStats struct {
 	CPUPercent float64
 	RSSBytes   uint64
@@ -96,7 +96,7 @@ type ProcStats struct {
 
 // TreeStats sums CPU and RSS across pid and its descendants.
 //
-// The interesting number for pt list is the cost of the whole `tart run`
+// The interesting number for plasticturtle list is the cost of the whole `tart run`
 // subtree, not of the launcher process, so this walks the parent links from a
 // single ps snapshot rather than sampling each process separately.
 func TreeStats(pid int) (ProcStats, error) {
@@ -157,7 +157,7 @@ func TreeStats(pid int) (ProcStats, error) {
 // DiskUsageBytes reports the on-disk size of a tart VM directory.
 //
 // The number is approximate: APFS clones share blocks with the source image,
-// and du charges shared blocks to whichever path it walks first. pt list
+// and du charges shared blocks to whichever path it walks first. plasticturtle list
 // labels the column accordingly rather than pretending otherwise.
 func DiskUsageBytes(vmDir string) (uint64, error) {
 	if vmDir == "" {
@@ -166,7 +166,7 @@ func DiskUsageBytes(vmDir string) (uint64, error) {
 	if _, err := os.Stat(vmDir); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// The clone has not been made yet, or is already deleted. Zero is
-			// the honest answer, not a failure worth breaking pt list over.
+			// the honest answer, not a failure worth breaking plasticturtle list over.
 			return 0, nil
 		}
 		return 0, fmt.Errorf("state: stat %s: %w", vmDir, err)
@@ -191,7 +191,7 @@ func TartVMDir(name string) (string, error) {
 	if name == "" {
 		return "", errors.New("state: empty vm name")
 	}
-	// tart itself honors TART_HOME; following it keeps pt list's disk column
+	// tart itself honors TART_HOME; following it keeps plasticturtle list's disk column
 	// pointing at the same files tart is actually using.
 	if home := os.Getenv("TART_HOME"); home != "" {
 		return filepath.Join(home, "vms", name), nil

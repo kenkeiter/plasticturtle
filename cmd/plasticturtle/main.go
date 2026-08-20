@@ -10,13 +10,13 @@ var version = "dev"
 
 // exitStatus is what pt exits with when Execute returns without an error.
 //
-// It exists because pt shell must mirror the remote shell's exit code, and a
+// It exists because plasticturtle shell must mirror the remote shell's exit code, and a
 // cobra RunE can only report success or an error — a remote exit of 3 is
 // neither.
 var exitStatus int
 
 func main() {
-	// pt _check-trust is served here, before the cobra tree is built, because
+	// plasticturtle _check-trust is served here, before the cobra tree is built, because
 	// the zsh plugin runs it on every directory change with a 10ms budget.
 	//
 	// Do not mistake this for the reason the budget is met. Measured on an

@@ -17,7 +17,7 @@ func TestScriptIsEmbedded(t *testing.T) {
 	// These are the contract with spec 5.1 and with cmd/pt. A refactor that
 	// drops one of them is a silent regression in somebody's shell.
 	for _, want := range []string{
-		"command -v pt",                   // silent no-op when pt is absent
+		"command -v plasticturtle",        // silent no-op when pt is absent
 		"add-zsh-hook",                    // must not clobber the user's hook arrays
 		"_check-trust",                    // the trust probe
 		"is not allowed (new or changed)", // the exact warning text
@@ -42,7 +42,7 @@ func zshPath(t *testing.T) string {
 func TestScriptParses(t *testing.T) {
 	zsh := zshPath(t)
 	dir := t.TempDir()
-	path := filepath.Join(dir, "pt.plugin.zsh")
+	path := filepath.Join(dir, "plasticturtle.plugin.zsh")
 	if err := os.WriteFile(path, []byte(Script()), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func newHarness(t *testing.T, exitCode int) harness {
 		dir:     dir,
 		home:    filepath.Join(dir, "home"),
 		project: filepath.Join(dir, "home", "proj"),
-		plugin:  filepath.Join(dir, "pt.plugin.zsh"),
+		plugin:  filepath.Join(dir, "plasticturtle.plugin.zsh"),
 		binDir:  filepath.Join(dir, "bin"),
 	}
 	for _, d := range []string{h.project, h.binDir} {
@@ -88,7 +88,7 @@ func newHarness(t *testing.T, exitCode int) harness {
 	// The stub stands in for the real binary: the plugin's whole contract with
 	// pt is an exit code, so an exit code is all the stub needs to produce.
 	stub := "#!/bin/sh\nexit " + itoa(exitCode) + "\n"
-	if err := os.WriteFile(filepath.Join(h.binDir, "pt"), []byte(stub), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(h.binDir, "plasticturtle"), []byte(stub), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return h
@@ -189,7 +189,7 @@ print -r -- "CHPWD=${#chpwd_functions}"`)
 func TestMissingPTIsSilent(t *testing.T) {
 	zsh := zshPath(t)
 	dir := t.TempDir()
-	plugin := filepath.Join(dir, "pt.plugin.zsh")
+	plugin := filepath.Join(dir, "plasticturtle.plugin.zsh")
 	if err := os.WriteFile(plugin, []byte(Script()), 0o644); err != nil {
 		t.Fatal(err)
 	}

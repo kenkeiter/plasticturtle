@@ -14,7 +14,7 @@ import (
 )
 
 // transportExitCode is what Interactive reports when the session failed rather
-// than the remote command: ssh(1) uses 255 for its own errors, and pt shell
+// than the remote command: ssh(1) uses 255 for its own errors, and plasticturtle shell
 // mirrors that so a script can tell "the VM said no" from "we never got in".
 const transportExitCode = 255
 
@@ -47,7 +47,7 @@ func WithStatusLine(status *StatusLine) InteractiveOption {
 // resolve — its TERM, forwarding SIGWINCH on resize, and putting the local
 // terminal in raw mode for the duration.
 //
-// It returns the remote command's exit status, which pt shell exits with. Raw
+// It returns the remote command's exit status, which plasticturtle shell exits with. Raw
 // mode is always restored, including on panic: leaving a user's terminal in
 // raw mode is the worst failure this tool can produce.
 func (c *Client) Interactive(ctx context.Context, command string, tty *os.File, opts ...InteractiveOption) (exitCode int, err error) {
@@ -154,7 +154,7 @@ func (c *Client) Interactive(ctx context.Context, command string, tty *os.File, 
 			_ = in.Close()
 		}()
 	} else {
-		// Without a terminal, stdin must still reach the guest: `pt shell <
+		// Without a terminal, stdin must still reach the guest: `plasticturtle shell <
 		// script`, a heredoc, and anything driving pt from CI all depend on it.
 		// Leaving it unset gives the remote shell immediate EOF, so it exits 0
 		// having run nothing — a silent success, which is the worst outcome

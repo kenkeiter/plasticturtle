@@ -10,7 +10,7 @@ import (
 
 // The supervisor refuses to boot a config the trust database does not know.
 //
-// pt shell already checks this, and anyone able to invoke `pt _supervise` can
+// plasticturtle shell already checks this, and anyone able to invoke `plasticturtle _supervise` can
 // invoke `tart` directly — so this is layering, not a security boundary. It
 // exists because _supervise accepts a whole config (image, mounts, modes) on
 // stdin and acts on it, and "the only caller is well-behaved" is an assumption

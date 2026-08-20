@@ -247,7 +247,7 @@ func (h *harness) deps() Deps {
 	}
 }
 
-// run executes pt shell to completion on the calling goroutine.
+// run executes plasticturtle shell to completion on the calling goroutine.
 func (h *harness) run() (int, error) {
 	h.t.Helper()
 	return Run(context.Background(), h.opts(), h.deps())
@@ -259,7 +259,7 @@ type result struct {
 	err  error
 }
 
-// start runs pt shell on its own goroutine, for the tests that have to change
+// start runs plasticturtle shell on its own goroutine, for the tests that have to change
 // the world underneath it while it waits.
 func (h *harness) start() <-chan result {
 	done := make(chan result, 1)
@@ -277,7 +277,7 @@ func (h *harness) await(done <-chan result) result {
 	case res := <-done:
 		return res
 	case <-time.After(30 * time.Second):
-		h.t.Fatal("pt shell did not finish")
+		h.t.Fatal("plasticturtle shell did not finish")
 		return result{}
 	}
 }

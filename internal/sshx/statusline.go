@@ -73,7 +73,7 @@ func (b *statusBar) guestHeight() int {
 // start reserves the bottom row and paints it.
 //
 // The line feed at the real bottom first scrolls the screen up one row, so
-// whatever the cursor was on — typically the pt shell command line — is not
+// whatever the cursor was on — typically the plasticturtle shell command line — is not
 // buried under the banner. Setting the region homes the cursor (DECSTBM's
 // defined side effect), so the guest's first output is then anchored at the
 // bottom of its area, where a fresh prompt reads naturally.

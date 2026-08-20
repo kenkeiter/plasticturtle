@@ -15,6 +15,7 @@ import (
 
 	"github.com/kenkeiter/plasticturtle/internal/config"
 	"github.com/kenkeiter/plasticturtle/internal/ports"
+	"github.com/kenkeiter/plasticturtle/internal/progname"
 	"github.com/kenkeiter/plasticturtle/internal/ptcfg"
 	"github.com/kenkeiter/plasticturtle/internal/sshx"
 	"github.com/kenkeiter/plasticturtle/internal/state"
@@ -38,7 +39,14 @@ const (
 // distinguish "never allowed" from "changed since it was allowed": telling an
 // attacker which of the two they are looking at buys them something, and
 // telling the user costs them nothing — the remedy is identical.
-const untrustedMessage = ".plasticturtle has changed (or was never allowed). Review it, then run: pt allow"
+//
+// It names the command the user actually invoked, because the binary answers to
+// both `plasticturtle` and `turtle` and advice they cannot copy verbatim is
+// advice that costs them a second guess.
+func untrustedMessage() string {
+	return ".plasticturtle has changed (or was never allowed). Review it, then run: " +
+		progname.Get() + " allow"
+}
 
 // configDriftNote is spec §6.2's note, verbatim. Attaching is still the right
 // answer: the VM's mounts and image were fixed when it booted, and destroying a
@@ -89,7 +97,7 @@ const (
 	decWaitGone
 )
 
-// runner is one pt shell invocation. Everything Run needs that is derived
+// runner is one plasticturtle shell invocation. Everything Run needs that is derived
 // rather than injected lives here, so no helper takes eight arguments.
 type runner struct {
 	o   Opts
@@ -179,7 +187,7 @@ func (r *runner) run(ctx context.Context) (int, error) {
 //
 // This is the security choke point. An unallowed or altered config is a hard
 // error and never a prompt: a prompt here would train users to approve a file
-// they have not read, which is the entire failure mode `pt allow` exists to
+// they have not read, which is the entire failure mode `plasticturtle allow` exists to
 // prevent.
 func (r *runner) resolveProject() error {
 	dir, err := config.Find(r.o.Path)
@@ -189,7 +197,7 @@ func (r *runner) resolveProject() error {
 			if start == "" {
 				start = "."
 			}
-			return fmt.Errorf("%w at or above %s; run pt init to create one", err, start)
+			return fmt.Errorf("%w at or above %s; run %s init to create one", err, start, progname.Get())
 		}
 		return err
 	}
@@ -207,7 +215,7 @@ func (r *runner) resolveProject() error {
 		return err
 	}
 	if !allowed {
-		return errors.New(untrustedMessage)
+		return errors.New(untrustedMessage())
 	}
 
 	r.projectDir, r.cfg, r.hash = dir, cfg, hash
@@ -357,7 +365,7 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 	}
 
 	// From here on the claim is ours, so every failure path must release it.
-	// Otherwise the next pt shell waits out the whole boot timeout for a
+	// Otherwise the next plasticturtle shell waits out the whole boot timeout for a
 	// supervisor that was never spawned.
 	release := func(err error) (bool, error) {
 		r.abandon(name)
@@ -421,7 +429,7 @@ func (r *runner) create(ctx context.Context) (bool, error) {
 	pid, procStart, err := r.d.Spawn.Spawn(ctx, exe, []string{superviseCommand}, stdin.Bytes(), r.d.Store.LogPath(r.projectID))
 	if err != nil {
 		// The creating record is published but nothing will ever advance it.
-		// Leaving it would make the next pt shell wait out the boot timeout.
+		// Leaving it would make the next plasticturtle shell wait out the boot timeout.
 		r.abandon(name)
 		return false, fmt.Errorf("shell: spawn supervisor: %w", err)
 	}
@@ -476,7 +484,7 @@ func (r *runner) preflightPersist(ctx context.Context, image string) error {
 }
 
 // recordPorts publishes the negotiated forwards onto the record this shell
-// already claimed, so pt ports can show them while the VM is still creating.
+// already claimed, so plasticturtle ports can show them while the VM is still creating.
 func (r *runner) recordPorts(forwards []ports.Resolved) error {
 	lk, err := r.d.Store.Lock(r.projectID)
 	if err != nil {
@@ -823,7 +831,7 @@ func (r *runner) executable() (string, error) {
 }
 
 // portMaps converts negotiated forwards into the on-disk shape. The record is
-// written before the supervisor exists, so pt ports can already show what this
+// written before the supervisor exists, so plasticturtle ports can already show what this
 // instance is going to forward.
 func portMaps(forwards []ports.Resolved) []state.PortMap {
 	out := make([]state.PortMap, 0, len(forwards))
@@ -837,7 +845,7 @@ func portMaps(forwards []ports.Resolved) []state.PortMap {
 	return out
 }
 
-// ttyName records which terminal a session is attached to, for pt list. It is
+// ttyName records which terminal a session is attached to, for plasticturtle list. It is
 // cosmetic, so an unnamable file is simply omitted.
 func ttyName(tty *os.File) string {
 	if tty == nil {

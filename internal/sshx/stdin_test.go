@@ -14,7 +14,7 @@ import (
 //
 // This is a regression test for a bug found by booting a real VM: the non-TTY
 // branch wired stdout and stderr but left sess.Stdin unset, so the remote shell
-// received immediate EOF, ran nothing, and exited 0. `pt shell < script`
+// received immediate EOF, ran nothing, and exited 0. `plasticturtle shell < script`
 // reported success having done nothing at all.
 func TestInteractiveForwardsStdinWithoutATTY(t *testing.T) {
 	srv, err := NewTestServer(Credentials{User: "admin", Password: "admin"})

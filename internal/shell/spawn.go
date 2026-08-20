@@ -52,14 +52,14 @@ func (realSpawner) Spawn(ctx context.Context, exe string, args []string, stdinDa
 
 	// exec.Command and not exec.CommandContext: the supervisor must outlive
 	// this process by design, and CommandContext would kill it the moment
-	// pt shell's context was cancelled — that is, the moment the user's session
+	// plasticturtle shell's context was cancelled — that is, the moment the user's session
 	// ended, which is exactly when the supervisor still has a VM to tear down.
 	cmd := exec.Command(exe, args...)
 	cmd.Stdin = bytes.NewReader(stdinData)
 	cmd.Stdout, cmd.Stderr = log, log
 
 	// Setsid puts the child in its own session with no controlling terminal.
-	// Without it the supervisor would share pt shell's process group and take
+	// Without it the supervisor would share plasticturtle shell's process group and take
 	// the ^C the user aimed at their remote shell, and would be sent SIGHUP
 	// when the terminal closed.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

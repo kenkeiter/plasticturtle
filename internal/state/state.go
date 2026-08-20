@@ -75,7 +75,7 @@ const (
 // gcLockWait is how long GC will wait for a project's lock before skipping the
 // project. It is deliberately a small multiple of the flock poll interval
 // rather than ptcfg.LockTimeout: a busy project is not an error condition for
-// GC, and `pt list` must never block behind somebody else's `pt shell`.
+// GC, and `plasticturtle list` must never block behind somebody else's `plasticturtle shell`.
 const gcLockWait = 5 * ptcfg.LockRetryInterval
 
 // vanishRetryWindow bounds how long an acquire retries a lock file that keeps
@@ -156,14 +156,14 @@ type PortMap struct {
 	HostPort int `json:"hostPort"`
 
 	// OriginalHostPort is set only when the configured port was taken and pt
-	// remapped it, so pt ports can render "remapped from N".
+	// remapped it, so plasticturtle ports can render "remapped from N".
 	OriginalHostPort int `json:"originalHostPort,omitempty"`
 }
 
 // Remapped reports whether this forward differs from what the config asked for.
 func (p PortMap) Remapped() bool { return p.OriginalHostPort != 0 }
 
-// Session is one live pt shell attached to an instance.
+// Session is one live plasticturtle shell attached to an instance.
 type Session struct {
 	ID        string    `json:"id"`
 	PID       int       `json:"pid"`
@@ -338,13 +338,13 @@ func (s *Store) RLock(projectID string) (*Lock, error) {
 // TryRLock takes the project's shared lock with a caller-chosen deadline,
 // returning ErrLockBusy rather than waiting out ptcfg.LockTimeout.
 //
-// It exists for status sweeps — pt ports --global and pt list — which visit
+// It exists for status sweeps — plasticturtle ports --global and plasticturtle list — which visit
 // every project, where waiting the full ten seconds on each wedged one would
 // cost N×10s and where a busy project is a skip rather than a failure.
 //
 // Unlike Lock and RLock it does NOT create the project directory, so a caller
 // that only observes cannot resurrect state a supervisor has just removed.
-// Note that pt shell's boot poller does NOT use this and therefore does not
+// Note that plasticturtle shell's boot poller does NOT use this and therefore does not
 // have that property: it takes RLock, which creates. The empty directory that
 // leaves behind after a failed boot is reclaimed by the next GCProject.
 //
@@ -750,7 +750,7 @@ func (s *Store) GCProject(ctx context.Context, tc tart.Client, projectID string)
 // supervisorReclaimable reports whether an instance record may be torn down.
 //
 // The plain rule is "the supervisor PID is not alive". The exception is the
-// window opened by the spec's own ordering: pt shell writes the record and
+// window opened by the spec's own ordering: plasticturtle shell writes the record and
 // *then* spawns the supervisor, so a genuinely healthy instance can briefly
 // carry no supervisor PID at all. Treating that as dead would have GC delete
 // the VM of the shell that is booting it, so an un-supervised record is given
@@ -759,7 +759,7 @@ func (s *Store) supervisorReclaimable(inst *Instance) bool {
 	if Alive(inst.SupervisorPID, inst.SupervisorStart) {
 		// A live but wedged supervisor (stale heartbeat) is deliberately left
 		// alone: killing a running process's VM out from under it is worse
-		// than leaving a stuck instance for the user to see in pt list.
+		// than leaving a stuck instance for the user to see in plasticturtle list.
 		return false
 	}
 	if inst.SupervisorPID <= 0 && !inst.CreatedAt.IsZero() {

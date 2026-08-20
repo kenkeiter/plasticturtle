@@ -82,7 +82,7 @@ func TestRenderJSON(t *testing.T) {
 }
 
 func TestRenderJSONEmptyIsAnArray(t *testing.T) {
-	// `pt ports --json | jq '.[]'` must not have to special-case null.
+	// `plasticturtle ports --json | jq '.[]'` must not have to special-case null.
 	if got, want := render(t, nil, false, true), "[]\n"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

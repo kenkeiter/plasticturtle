@@ -197,17 +197,17 @@ func TestInitRefusesExistingConfig(t *testing.T) {
 	var out bytes.Buffer
 	err := runInit(e, project, &out, true)
 	if err == nil {
-		t.Fatal("pt init overwrote an existing .plasticturtle")
+		t.Fatal("plasticturtle init overwrote an existing .plasticturtle")
 	}
-	if !strings.Contains(err.Error(), "pt allow") {
-		t.Errorf("error should point at pt allow, got: %v", err)
+	if !strings.Contains(err.Error(), "plasticturtle allow") {
+		t.Errorf("error should point at plasticturtle allow, got: %v", err)
 	}
 }
 
 func TestInitRefusesNonInteractive(t *testing.T) {
 	e := testEnv(t)
 	var out bytes.Buffer
-	// Every question pt init asks needs an answer; hanging on a read that will
+	// Every question plasticturtle init asks needs an answer; hanging on a read that will
 	// never arrive is worse than saying so.
 	err := runInit(e, t.TempDir(), &out, false)
 	if err == nil || !strings.Contains(err.Error(), "interactive") {
@@ -231,7 +231,7 @@ func TestParsePortSpecs(t *testing.T) {
 		{in: "0", wantErr: true},
 		{in: "65536", wantErr: true},
 		{in: "3000:0", wantErr: true},
-		// Caught here rather than by Config.Validate, so pt init can re-prompt
+		// Caught here rather than by Config.Validate, so plasticturtle init can re-prompt
 		// instead of discarding every answer after the form is dismissed.
 		{in: "3000, 3000", wantErr: true},
 		{in: "3000, 9000:3000", wantErr: true},
@@ -282,7 +282,7 @@ func TestParseDomainList(t *testing.T) {
 		{in: "*.com", wantErr: true},
 		{in: "nodot", wantErr: true},
 		{in: "10.0.0.1", wantErr: true},
-		// Caught here so pt init can re-prompt rather than discarding answers.
+		// Caught here so plasticturtle init can re-prompt rather than discarding answers.
 		{in: "github.com, github.com", wantErr: true},
 		{in: "github.com, GitHub.com.", wantErr: true},
 	}

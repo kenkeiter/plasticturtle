@@ -1,4 +1,4 @@
-// Package shell implements pt shell: the only command most users run.
+// Package shell implements plasticturtle shell: the only command most users run.
 //
 // It is the interactive half of the create path. Everything that needs a
 // terminal happens here — trust errors, port-conflict prompts, the boot
@@ -17,7 +17,7 @@ import (
 	"github.com/kenkeiter/plasticturtle/internal/trust"
 )
 
-// Opts configures one pt shell invocation.
+// Opts configures one plasticturtle shell invocation.
 type Opts struct {
 	// Path is where to start searching upward for .plasticturtle; empty means
 	// the working directory.
@@ -48,7 +48,7 @@ type Spawner interface {
 	// stderr redirected to logPath and stdin fed from stdinData, and returns
 	// the child's identity for the instance record.
 	//
-	// The child must survive the parent: pt shell exits when the user's
+	// The child must survive the parent: plasticturtle shell exits when the user's
 	// session ends, and the supervisor outlives it by design.
 	Spawn(ctx context.Context, exe string, args []string, stdinData []byte, logPath string) (pid int, procStart uint64, err error)
 }

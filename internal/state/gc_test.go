@@ -323,7 +323,7 @@ func TestGCSkipsLockedProject(t *testing.T) {
 	}
 	defer func() { _ = lk.Unlock() }()
 
-	// GC must give up on a busy project quickly: `pt list` runs this pass.
+	// GC must give up on a busy project quickly: `plasticturtle list` runs this pass.
 	start := time.Now()
 	if err := s.GC(context.Background(), tc); err != nil {
 		t.Fatalf("GC: %v", err)
@@ -341,7 +341,7 @@ func TestGCSkipsLockedProject(t *testing.T) {
 }
 
 // TestGCSpareCreatingInstanceWithoutSupervisor covers the window the spec's own
-// ordering opens: pt shell writes the record, then spawns the supervisor.
+// ordering opens: plasticturtle shell writes the record, then spawns the supervisor.
 func TestGCSparesCreatingInstanceWithoutSupervisor(t *testing.T) {
 	s := newTestStore(t)
 	id := ProjectID("/Users/alice/booting")
@@ -568,7 +568,7 @@ func TestGCHonorsCanceledContext(t *testing.T) {
 }
 
 func TestGCProjectRequiresCallerLock(t *testing.T) {
-	// GCProject is the variant pt shell calls with the lock already held; it
+	// GCProject is the variant plasticturtle shell calls with the lock already held; it
 	// must not try to take the lock again (which would deadlock nothing on
 	// darwin flock semantics, but would be a lie about the contract).
 	s := newTestStore(t)
